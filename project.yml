@@ -1,0 +1,50 @@
+# XcodeGen 工程描述：`xcodegen generate` 生成 TDock.xcodeproj（不入库）。
+name: TDock
+options:
+  bundleIdPrefix: app.tdock
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: "1.99.0"
+  TDockCore:
+    path: Packages/TDockCore
+
+targets:
+  TDock:
+    type: application
+    platform: iOS
+    sources:
+      - TDock
+    dependencies:
+      - package: SwiftTerm
+      - package: TDockCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.tdock.TDock
+        PRODUCT_NAME: TDock
+        INFOPLIST_FILE: TDock/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        # 在 Xcode 中选择你自己的开发团队；不要把团队 ID 等个人信息提交到仓库。
+        DEVELOPMENT_TEAM: ""
+
+schemes:
+  TDock:
+    build:
+      targets:
+        TDock: all
+    run:
+      config: Debug

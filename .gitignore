@@ -1,0 +1,18 @@
+# Xcode / XcodeGen
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
+
+# SwiftPM
+.build/
+.swiftpm/
+Packages/*/.build/
+
+# macOS
+.DS_Store
+
+# 私钥/凭据永远不入库
+*.pem
+*.key
