@@ -33,6 +33,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.tdock.TDock
         PRODUCT_NAME: TDock
         INFOPLIST_FILE: TDock/Resources/Info.plist
+        # iCloud 键值存储（同步服务器配置）。使用免费个人团队签名时 iCloud 不可用，可删除此行。
+        CODE_SIGN_ENTITLEMENTS: TDock/Resources/TDock.entitlements
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

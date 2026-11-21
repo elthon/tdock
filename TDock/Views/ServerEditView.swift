@@ -4,10 +4,11 @@ import TDockCore
 /// 新增 / 编辑服务器。密码或私钥只写入 Keychain，从不回显已保存的值。
 struct ServerEditView: View {
     @EnvironmentObject private var store: ServerStore
+    @EnvironmentObject private var keys: KeyLibrary
     @Environment(\.dismiss) private var dismiss
 
     private let original: ServerProfile?
-    /// 原配置在 Keychain 中是否已有凭据（只判断存在与否，不读取到界面）。
+    /// 原配置在 Keychain 中是否已有“该服务器专属”的凭据（只判断存在与否，不读取到界面）。
     private let originalHasSecret: Bool
     @State private var draft: ServerProfile
     @State private var portText: String
@@ -24,10 +25,13 @@ struct ServerEditView: View {
         _portText = State(initialValue: String(draft.port))
     }
 
-    /// 编辑时且认证方式未改变：允许凭据留空（沿用 Keychain 中已保存的）。
+    /// 编辑时认证方式未变、且仍使用该服务器专属凭据：允许留空（沿用 Keychain 中已保存的）。
     private var canKeepSavedSecret: Bool {
-        originalHasSecret && original?.authMethod == draft.authMethod
+        guard let original, originalHasSecret, original.authMethod == draft.authMethod else { return false }
+        return draft.authMethod == .password || (original.keyID == nil && draft.keyID == nil)
     }
+
+    private var usesLibraryKey: Bool { draft.authMethod == .privateKey && draft.keyID != nil }
 
     var body: some View {
         NavigationStack {
@@ -44,42 +48,20 @@ struct ServerEditView: View {
                 }
 
                 Section {
-                    Picker("认证方式", selection: $draft.authMethod) {
-                        Text("密码").tag(ServerProfile.AuthMethod.password)
-                        Text("私钥").tag(ServerProfile.AuthMethod.privateKey)
+                    Picker("连接方式", selection: $draft.transport) {
+                        Text("SSH").tag(ServerProfile.Transport.ssh)
+                        Text("Mosh").tag(ServerProfile.Transport.mosh)
                     }
                     .pickerStyle(.segmented)
-                    .onChange(of: draft.authMethod) { _ in secret = "" }
-
-                    switch draft.authMethod {
-                    case .password:
-                        SecureField(canKeepSavedSecret ? "已保存，留空则不修改" : "密码", text: $secret)
-                            .textContentType(.password)
-                    case .privateKey:
-                        ZStack(alignment: .topLeading) {
-                            TextEditor(text: $secret)
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(minHeight: 160)
-                                .plainInput()
-                            if secret.isEmpty {
-                                Text(canKeepSavedSecret
-                                     ? "已保存，留空则不修改"
-                                     : "粘贴 OpenSSH 私钥\n-----BEGIN OPENSSH PRIVATE KEY-----\n…")
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.top, 8)
-                                    .padding(.leading, 5)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                    }
                 } header: {
-                    Text("认证")
+                    Text("连接方式")
                 } footer: {
-                    Text(draft.authMethod == .password
-                         ? "密码仅保存在本机 Keychain。"
-                         : "私钥仅保存在本机 Keychain。支持未加密的 Ed25519 / ECDSA 私钥。")
+                    Text(draft.transport == .mosh
+                         ? "Mosh 先用 SSH 登录启动 mosh-server，之后走 UDP：切换网络、短暂断线、锁屏后会话不断，打字有本地回显。需要服务器安装 mosh 并放行 UDP 60000–61000。"
+                         : "标准 SSH 终端。")
                 }
+
+                authSection
 
                 if let errorMessage {
                     Section {
@@ -100,11 +82,66 @@ struct ServerEditView: View {
         }
     }
 
+    private var authSection: some View {
+        Section {
+            Picker("认证方式", selection: $draft.authMethod) {
+                Text("密码").tag(ServerProfile.AuthMethod.password)
+                Text("私钥").tag(ServerProfile.AuthMethod.privateKey)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: draft.authMethod) { _ in secret = "" }
+
+            switch draft.authMethod {
+            case .password:
+                SecureField(canKeepSavedSecret ? "已保存，留空则不修改" : "密码", text: $secret)
+                    .textContentType(.password)
+            case .privateKey:
+                Picker("私钥", selection: $draft.keyID) {
+                    Text("粘贴私钥").tag(UUID?.none)
+                    ForEach(keys.keys) { key in
+                        Text(key.name).tag(UUID?.some(key.id))
+                    }
+                }
+                if let key = keys.key(draft.keyID) {
+                    Text(key.fingerprint).font(.caption.monospaced()).foregroundStyle(.secondary)
+                } else {
+                    privateKeyEditor
+                }
+            }
+        } header: {
+            Text("认证")
+        } footer: {
+            Text(draft.authMethod == .password
+                 ? "密码仅保存在本机 Keychain，不会同步到 iCloud。"
+                 : "私钥仅保存在本机 Keychain，不会同步到 iCloud。支持未加密的 Ed25519 / ECDSA 私钥；也可在“设置 → 密钥库”中生成。")
+        }
+    }
+
+    private var privateKeyEditor: some View {
+        ZStack(alignment: .topLeading) {
+            TextEditor(text: $secret)
+                .font(.system(.caption, design: .monospaced))
+                .frame(minHeight: 160)
+                .plainInput()
+            if secret.isEmpty {
+                Text(canKeepSavedSecret
+                     ? "已保存，留空则不修改"
+                     : "粘贴 OpenSSH 私钥\n-----BEGIN OPENSSH PRIVATE KEY-----\n…")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 8)
+                    .padding(.leading, 5)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
     private func save() {
         var profile = draft
         profile.name = profile.name.trimmingCharacters(in: .whitespaces)
         profile.host = profile.host.trimmingCharacters(in: .whitespaces)
         profile.username = profile.username.trimmingCharacters(in: .whitespaces)
+        if profile.authMethod == .password { profile.keyID = nil }
         guard let port = Int(portText.trimmingCharacters(in: .whitespaces)) else {
             errorMessage = "端口必须是数字"
             return
@@ -116,24 +153,26 @@ struct ServerEditView: View {
         }
 
         var newSecret: String? = nil
-        switch profile.authMethod {
-        case .password:
-            if !secret.isEmpty { newSecret = secret }
-        case .privateKey:
-            let pem = secret.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !pem.isEmpty {
-                do {
-                    _ = try OpenSSHPrivateKey.parse(pem)
-                } catch {
-                    errorMessage = error.localizedDescription
-                    return
+        if !usesLibraryKey {
+            switch profile.authMethod {
+            case .password:
+                if !secret.isEmpty { newSecret = secret }
+            case .privateKey:
+                let pem = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !pem.isEmpty {
+                    do {
+                        _ = try OpenSSHPrivateKey.parse(pem)
+                    } catch {
+                        errorMessage = error.localizedDescription
+                        return
+                    }
+                    newSecret = pem + "\n"
                 }
-                newSecret = pem + "\n"
             }
-        }
-        if newSecret == nil && !canKeepSavedSecret {
-            errorMessage = profile.authMethod == .password ? "请填写密码" : "请粘贴私钥"
-            return
+            if newSecret == nil && !canKeepSavedSecret {
+                errorMessage = profile.authMethod == .password ? "请填写密码" : "请粘贴私钥或选择密钥库中的密钥"
+                return
+            }
         }
 
         do {

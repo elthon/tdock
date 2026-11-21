@@ -8,8 +8,12 @@ import TDockCore
 /// - 以服务器 ID + 凭据类型作为 account。
 enum KeychainStore {
     enum Kind: String {
+        /// 某台服务器的密码（ID = 服务器 ID）
         case password
+        /// 为某台服务器单独粘贴的私钥（ID = 服务器 ID）
         case privateKey
+        /// 密钥库中的私钥（ID = 密钥 ID）
+        case libraryKey
     }
 
     struct Failure: LocalizedError {

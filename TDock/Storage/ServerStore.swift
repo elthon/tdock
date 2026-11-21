@@ -1,42 +1,79 @@
 import Foundation
 import TDockCore
 
-/// 服务器列表（非敏感字段）持久化到 Application Support/servers.json。
+/// 服务器列表（非敏感字段）持久化到 Application Support/servers.json，删除记录（墓碑）在 tombstones.json。
 final class ServerStore: ObservableObject {
     @Published private(set) var servers: [ServerProfile] = []
+    private(set) var tombstones: [UUID: Date] = [:]
 
-    private let fileURL: URL
+    /// 本地修改后回调（CloudSync 据此推送到 iCloud）。
+    var onLocalChange: (() -> Void)?
 
-    init(fileURL: URL = AppFiles.url(for: "servers.json")) {
-        self.fileURL = fileURL
-        servers = AppFiles.load([ServerProfile].self, from: fileURL) ?? []
+    private let serversURL: URL
+    private let tombstonesURL: URL
+
+    init(
+        serversURL: URL = AppFiles.url(for: "servers.json"),
+        tombstonesURL: URL = AppFiles.url(for: "tombstones.json")
+    ) {
+        self.serversURL = serversURL
+        self.tombstonesURL = tombstonesURL
+        servers = AppFiles.load([ServerProfile].self, from: serversURL) ?? []
+        tombstones = AppFiles.load([UUID: Date].self, from: tombstonesURL) ?? [:]
     }
 
     /// 新增或更新服务器。`secret` 为 nil 表示不修改已保存的凭据。
     func save(_ profile: ServerProfile, secret: String?) throws {
+        var profile = profile
+        profile.updatedAt = Date()
         if let secret {
             try KeychainStore.save(secret, for: profile.id, kind: .init(profile.authMethod))
         }
-        // 切换认证方式后，清除另一种方式的旧凭据。
-        let unused: KeychainStore.Kind = profile.authMethod == .password ? .privateKey : .password
-        KeychainStore.delete(for: profile.id, kind: unused)
+        // 切换认证方式/改用密钥库后，清除不再使用的旧凭据。
+        if profile.authMethod == .password || profile.keyID != nil {
+            KeychainStore.delete(for: profile.id, kind: .privateKey)
+        }
+        if profile.authMethod == .privateKey {
+            KeychainStore.delete(for: profile.id, kind: .password)
+        }
 
         if let index = servers.firstIndex(where: { $0.id == profile.id }) {
             servers[index] = profile
         } else {
             servers.append(profile)
         }
+        tombstones[profile.id] = nil
         try persist()
+        onLocalChange?()
     }
 
     func delete(_ profile: ServerProfile) {
         KeychainStore.deleteAll(for: profile.id)
         servers.removeAll { $0.id == profile.id }
+        tombstones[profile.id] = Date()
+        try? persist()
+        onLocalChange?()
+    }
+
+    // MARK: - Sync
+
+    var document: SyncDocument {
+        SyncDocument(servers: servers, tombstones: tombstones)
+    }
+
+    /// 应用合并后的文档（来自 iCloud）。被远端删除的服务器同时清除本机凭据。
+    func apply(_ merged: SyncDocument) {
+        guard merged != document else { return }
+        let removed = Set(servers.map(\.id)).subtracting(merged.servers.map(\.id))
+        removed.forEach(KeychainStore.deleteAll)
+        servers = merged.servers
+        tombstones = merged.tombstones
         try? persist()
     }
 
     private func persist() throws {
-        try AppFiles.save(servers, to: fileURL)
+        try AppFiles.save(servers, to: serversURL)
+        try AppFiles.save(tombstones, to: tombstonesURL)
     }
 }
 
