@@ -56,6 +56,7 @@ struct ServerListView: View {
                 }
             }
             .navigationTitle("tdock")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .host(let id):

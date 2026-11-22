@@ -8,6 +8,13 @@ struct TerminalWorkspaceView: View {
 
     @EnvironmentObject private var manager: SessionManager
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var barHeight: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 44 : (verticalSizeClass == .compact ? 32 : 40)
+    }
 
     private var tabs: [TerminalSession] { manager.terminals(for: hostID) }
     private var selected: TerminalSession? {
@@ -16,7 +23,27 @@ struct TerminalWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TerminalTabStrip(tabs: tabs, selection: selected?.id, select: select, close: close)
+            HStack(spacing: 0) {
+                Button { dismiss() } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: barHeight)
+                }
+                .accessibilityLabel("返回主机详情")
+                TerminalTabStrip(tabs: tabs, selection: selected?.id, height: barHeight,
+                                 select: select, close: close)
+                    .frame(maxWidth: .infinity)
+                Button(action: newTab) {
+                    Image(systemName: "plus")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: barHeight)
+                }
+                .keyboardShortcut("t", modifiers: .command)
+                .accessibilityLabel("新建标签")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .background(Color(white: 0.1))
             Divider()
             if let selected {
                 TerminalPane(session: selected)
@@ -28,14 +55,7 @@ struct TerminalWorkspaceView: View {
         .background(Color(settings.theme.background))
         .navigationTitle(manager.profile(hostID)?.displayName ?? "")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: newTab) { Image(systemName: "plus") }
-                    .keyboardShortcut("t", modifiers: .command)
-                    .accessibilityLabel("新建标签")
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .background { hardwareKeyboardShortcuts }
     }
 
@@ -97,6 +117,7 @@ struct TerminalWorkspaceView: View {
 private struct TerminalTabStrip: View {
     let tabs: [TerminalSession]
     let selection: UUID?
+    let height: CGFloat
     let select: (TerminalSession) -> Void
     let close: (TerminalSession) -> Void
 
@@ -105,14 +126,14 @@ private struct TerminalTabStrip: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(tabs) { tab in
-                        TerminalTabChip(session: tab, isSelected: tab.id == selection,
+                        TerminalTabChip(session: tab, isSelected: tab.id == selection, height: height,
                                         select: { select(tab) }, close: { close(tab) })
                             .id(tab.id)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
             }
+            .frame(height: height)
             .onChange(of: selection) { id in
                 if let id { withAnimation { proxy.scrollTo(id) } }
             }
@@ -124,30 +145,40 @@ private struct TerminalTabStrip: View {
 private struct TerminalTabChip: View {
     @ObservedObject var session: TerminalSession
     let isSelected: Bool
+    let height: CGFloat
     let select: () -> Void
     let close: () -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 6, height: 6)
-            Text(session.title)
-                .font(.footnote.weight(isSelected ? .semibold : .regular))
-                .lineLimit(1)
+        HStack(spacing: 0) {
+            Button(action: select) {
+                HStack(spacing: 6) {
+                    Circle().fill(statusColor).frame(width: 6, height: 6)
+                    Text(session.title)
+                        .font(.footnote.weight(isSelected ? .semibold : .regular))
+                        .lineLimit(1)
+                }
+                .padding(.leading, 10)
+                .frame(minHeight: height)
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("切换到 \(session.title)")
+            .accessibilityAddTraits(isSelected ? [.isSelected] : [])
             Button(action: close) {
                 Image(systemName: "xmark").font(.caption2.weight(.bold))
+                    .frame(width: 32, height: height)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("关闭 \(session.title)")
         }
         .foregroundStyle(isSelected ? Color.white : Color.gray)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(isSelected ? Color(white: 0.25) : Color(white: 0.15), in: Capsule())
+        .buttonStyle(.plain)
+        .background {
+            Capsule().fill(isSelected ? Color(white: 0.25) : Color(white: 0.15))
+                .frame(height: min(height, dynamicChipHeight))
+        }
         .contentShape(Capsule())
-        .onTapGesture(perform: select)
-        .accessibilityAddTraits(.isButton)
     }
 
     private var statusColor: Color {
@@ -157,6 +188,8 @@ private struct TerminalTabChip: View {
         case .ended(let message): return message == nil ? .gray : .red
         }
     }
+
+    private var dynamicChipHeight: CGFloat { height >= 44 ? 40 : 28 }
 }
 
 /// 单个终端 + 连接状态遮罩。
