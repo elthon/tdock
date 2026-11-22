@@ -22,7 +22,9 @@ final class ShortcutLayoutTests: XCTestCase {
         XCTAssertEqual(ShortcutKey.ctrl.kind, .modifier)
         XCTAssertEqual(ShortcutKey.up.kind, .cursor)
         XCTAssertEqual(ShortcutKey.esc.kind, .bytes([0x1B]))
-        for key in ShortcutKey.allCases where key.kind != .modifier && key.kind != .cursor {
+        XCTAssertEqual(ShortcutKey.paste.kind, .paste)
+        XCTAssertTrue(ShortcutKey.paste.bytes.isEmpty)
+        for key in ShortcutKey.allCases where key.kind != .modifier && key.kind != .cursor && key.kind != .paste {
             XCTAssertFalse(key.bytes.isEmpty, "\(key) 应发送字节")
             XCTAssertFalse(key.label.isEmpty)
         }
@@ -31,7 +33,7 @@ final class ShortcutLayoutTests: XCTestCase {
     func testDefaultLayoutMatchesSpec() {
         XCTAssertEqual(ShortcutLayout.default.pages[0], [.esc, .tab, .ctrl, .alt, .left, .up, .down, .right])
         XCTAssertEqual(ShortcutKey.controlCombos, [.ctrlC, .ctrlD, .ctrlZ, .ctrlL, .ctrlR, .ctrlA, .ctrlE, .ctrlK, .ctrlU])
-        XCTAssertEqual(ShortcutKey.agentDrawer, [.esc, .tab, .ctrlC, .up, .down])
+        XCTAssertEqual(ShortcutKey.agentDrawer, [.esc, .tab, .ctrlC, .up, .down, .paste])
         XCTAssertTrue(ShortcutLayout.default.pages.allSatisfy { $0.count <= ShortcutLayout.maxKeysPerPage })
     }
 

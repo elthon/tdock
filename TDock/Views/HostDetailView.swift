@@ -104,7 +104,7 @@ private struct TerminalActivityCard: View {
     @ViewBuilder
     private var phaseBadge: some View {
         switch session.phase {
-        case .connecting: ProgressView()
+        case .connecting, .reconnecting: ProgressView()
         case .connected: Image(systemName: "circle.fill").font(.caption2).foregroundStyle(.green)
         case .ended: Image(systemName: "pause.circle").foregroundStyle(.secondary)
         }

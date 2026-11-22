@@ -25,31 +25,32 @@ struct ServerListView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var sheet: Sheet?
     @State private var pendingDelete: ServerProfile?
+    @State private var query = ""
+    /// 切换所选主机时会重置详情栈；一键直达终端等操作在重置之后再压入目标页面。
+    @State private var pendingRoute: Route?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
             List(selection: $selectedHost) {
-                ForEach(store.servers) { server in
-                    NavigationLink(value: server.id) {
-                        ServerRow(server: server, openCount: manager.terminals(for: server.id).count)
-                    }
-                    .swipeActions {
-                        Button("删除", role: .destructive) { pendingDelete = server }
-                        Button("编辑") { sheet = .edit(server) }
-                            .tint(.blue)
-                    }
-                    .contextMenu {
-                        Button { sheet = .edit(server) } label: {
-                            Label("编辑", systemImage: "pencil")
+                ForEach(ServerListOrganizer.sections(store.servers, query: query)) { section in
+                    Section {
+                        ForEach(section.servers) { server in
+                            row(server)
                         }
-                        Button(role: .destructive) { pendingDelete = server } label: {
-                            Label("删除", systemImage: "trash")
+                    } header: {
+                        if let title = section.title {
+                            Label(title, systemImage: section.kind == .pinned ? "pin.fill" : "folder")
                         }
                     }
                 }
             }
+            .searchable(text: $query, prompt: "搜索名称、主机、用户、分组")
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
             .overlay {
-                if store.servers.isEmpty {
+                if !store.servers.isEmpty && !query.isEmpty && ServerListOrganizer.sections(store.servers, query: query).isEmpty {
+                    Text("没有匹配“\(query)”的服务器").foregroundStyle(.secondary)
+                } else if store.servers.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "server.rack").font(.largeTitle)
                         Text("还没有服务器").font(.headline)
@@ -104,7 +105,13 @@ struct ServerListView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .onChange(of: selectedHost) { _ in path = NavigationPath() }
+        .onChange(of: selectedHost) { _ in
+            path = NavigationPath()
+            if let route = pendingRoute {
+                path.append(route)
+                pendingRoute = nil
+            }
+        }
         .onChange(of: store.servers.map(\.id)) { ids in
             if let selectedHost, !ids.contains(selectedHost) {
                 self.selectedHost = nil
@@ -136,11 +143,95 @@ struct ServerListView: View {
     private func toggleSidebar() {
         withAnimation { columns = columns == .detailOnly ? .all : .detailOnly }
     }
+
+    private func row(_ server: ServerProfile) -> some View {
+        let open = manager.terminals(for: server.id)
+        return NavigationLink(value: server.id) {
+            ServerRow(server: server, openCount: open.count) {
+                quickOpen(server)
+            }
+        }
+        .swipeActions(edge: .leading) {
+            Button { openNewTerminal(server) } label: { Label("新建终端", systemImage: "plus.rectangle") }
+                .tint(.green)
+            if !open.isEmpty {
+                Button { resumeTerminal(server) } label: { Label("恢复终端", systemImage: "terminal") }
+                    .tint(.indigo)
+            }
+        }
+        .swipeActions {
+            Button("删除", role: .destructive) { pendingDelete = server }
+            Button("编辑") { sheet = .edit(server) }
+                .tint(.blue)
+            Button(server.pinned ? "取消置顶" : "置顶") { togglePin(server) }
+                .tint(.orange)
+        }
+        .contextMenu {
+            Button { openNewTerminal(server) } label: {
+                Label("新建终端", systemImage: "plus.rectangle")
+            }
+            if !open.isEmpty {
+                Button { resumeTerminal(server) } label: {
+                    Label("恢复最近终端", systemImage: "terminal")
+                }
+            }
+            Button { show(server, route: .sftp(hostID: server.id)) } label: {
+                Label("文件（SFTP）", systemImage: "folder")
+            }
+            Divider()
+            Button { togglePin(server) } label: {
+                Label(server.pinned ? "取消置顶" : "置顶", systemImage: server.pinned ? "pin.slash" : "pin")
+            }
+            Button { sheet = .edit(server) } label: {
+                Label("编辑", systemImage: "pencil")
+            }
+            Button(role: .destructive) { pendingDelete = server } label: {
+                Label("删除", systemImage: "trash")
+            }
+        }
+    }
+
+    /// 选中主机并在详情栈中打开指定页面（终端 / SFTP）。
+    private func show(_ server: ServerProfile, route: Route) {
+        if selectedHost == server.id {
+            path = NavigationPath()
+            path.append(route)
+        } else {
+            pendingRoute = route
+            selectedHost = server.id
+        }
+    }
+
+    /// 一键直达：有打开的终端则恢复最近使用的那个，否则新建。
+    private func quickOpen(_ server: ServerProfile) {
+        if manager.mostRecentTerminal(hostID: server.id) != nil {
+            resumeTerminal(server)
+        } else {
+            openNewTerminal(server)
+        }
+    }
+
+    private func openNewTerminal(_ server: ServerProfile) {
+        let session = manager.openTerminal(hostID: server.id)
+        show(server, route: .workspace(hostID: server.id, terminalID: session.id))
+    }
+
+    private func resumeTerminal(_ server: ServerProfile) {
+        let session = manager.mostRecentTerminal(hostID: server.id)
+        show(server, route: .workspace(hostID: server.id, terminalID: session?.id))
+    }
+
+    private func togglePin(_ server: ServerProfile) {
+        var updated = server
+        updated.pinned.toggle()
+        try? store.save(updated, secret: nil)
+    }
 }
 
 private struct ServerRow: View {
     let server: ServerProfile
     let openCount: Int
+    let openTerminal: () -> Void
 
     var body: some View {
         HStack {
@@ -161,10 +252,20 @@ private struct ServerRow: View {
                     .background(.tint.opacity(0.15), in: Capsule())
             }
             if openCount > 0 {
-                Label("\(openCount)", systemImage: "terminal")
-                    .font(.caption)
+                Text("\(openCount)")
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(.green)
             }
+            // 一键直达终端（borderless：点按钮不会触发整行的导航）。
+            Button(action: openTerminal) {
+                Image(systemName: openCount > 0 ? "terminal.fill" : "terminal")
+                    .font(.title3)
+                    .foregroundStyle(openCount > 0 ? Color.green : Color.accentColor)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(openCount > 0 ? "恢复最近终端" : "新建终端")
         }
     }
 }

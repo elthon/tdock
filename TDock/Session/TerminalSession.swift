@@ -34,8 +34,18 @@ final class TerminalSession: ObservableObject, Identifiable {
     enum Phase: Equatable {
         case connecting
         case connected
+        /// 连接丢失后自动重连中（等待退避或正在尝试）。attempt 从 1 开始。
+        case reconnecting(attempt: Int, max: Int)
         /// message 为 nil 表示远端正常退出。
         case ended(message: String?)
+    }
+
+    /// 可在终端页原地处理的连接问题。
+    enum Issue: Equatable {
+        /// 本机缺少凭据：弹出补填表单，填完直接重连。
+        case missingCredential(CredentialProvider.MissingCredential.Kind)
+        /// 主机指纹与记录不一致：二次确认后更新记录并重连。
+        case hostKeyMismatch(host: String, port: Int, expected: String, actual: String)
     }
 
     /// 滚动缓冲上限（行）。
@@ -48,17 +58,24 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published private(set) var phase: Phase = .connecting
     /// 远端程序通过 OSC 设置的标题（例如 shell 提示的 user@host:~）。
     @Published private(set) var remoteTitle = ""
+    /// 最近一次连接失败中可原地处理的问题（缺凭据、指纹变更）。
+    @Published private(set) var issue: Issue?
+    /// 捏合缩放时的字号 / 尺寸提示（nil 表示不显示）。
+    @Published private(set) var zoomHUD: ZoomHUD?
+    /// 最近一次被选中/使用的时间（服务器列表“恢复最近终端”）。
+    var lastActiveAt = Date()
     let terminalView: TerminalView
 
     private let index: Int
     private weak var manager: SessionManager?
     private var transport: TerminalTransport?
     private var shortcutBar: ShortcutBar?
+    private var pinchZoom: PinchZoomController?
     private var generation = 0
     /// 因连接丢失而结束、需要自动重连。
     private var needsReconnect = false
     private var reconnectAttempts = 0
-    private static let maxReconnectAttempts = 3
+    private let reconnectPolicy = ReconnectPolicy.default
 
     init(hostID: UUID, kind: Kind, index: Int, manager: SessionManager) {
         self.hostID = hostID
@@ -72,14 +89,22 @@ final class TerminalSession: ObservableObject, Identifiable {
         )
         terminalView.terminalDelegate = self
         // 自定义快捷栏替换 SwiftTerm 默认的按键栏。
-        let bar = ShortcutBar(terminalView: terminalView, layout: manager.settings.shortcutLayout)
+        let bar = ShortcutBar(terminalView: terminalView, layout: manager.settings.shortcutLayout,
+                              snippets: manager.settings.snippets)
         terminalView.inputAccessoryView = bar
         shortcutBar = bar
         applyAppearance()
+        pinchZoom = PinchZoomController(terminalView: terminalView, settings: manager.settings) { [weak self] hud in
+            self?.zoomHUD = hud
+        }
     }
 
     func updateShortcutBar(_ layout: ShortcutLayout) {
         shortcutBar?.update(layout: layout)
+    }
+
+    func updateSnippets(_ snippets: [Snippet]) {
+        shortcutBar?.update(snippets: snippets)
     }
 
     var title: String {
@@ -106,7 +131,12 @@ final class TerminalSession: ObservableObject, Identifiable {
         transport = nil
         generation += 1
         let generation = self.generation
-        phase = .connecting
+        issue = nil
+        if case .reconnecting = phase {
+            // 自动重连的尝试过程中保持“重连中”状态显示。
+        } else {
+            phase = .connecting
+        }
 
         let dims = terminalView.terminalDimensions
         let cols = dims.cols > 0 ? dims.cols : 80
@@ -138,10 +168,29 @@ final class TerminalSession: ObservableObject, Identifiable {
                 }
             } catch {
                 guard self.generation == generation else { return }
-                phase = .ended(message: error.localizedDescription)
-                if needsReconnect { scheduleReconnect() }
+                issue = Self.issue(for: error, profile: profile)
+                if needsReconnect && issue == nil && reconnectAttempts < reconnectPolicy.maxAttempts {
+                    scheduleReconnect()
+                } else {
+                    let wasReconnecting = needsReconnect
+                    needsReconnect = false
+                    phase = .ended(message: wasReconnecting && issue == nil
+                                   ? "自动重连失败：\(error.localizedDescription)"
+                                   : error.localizedDescription)
+                }
             }
         }
+    }
+
+    private static func issue(for error: Error, profile: ServerProfile?) -> Issue? {
+        if let missing = error as? CredentialProvider.MissingCredential {
+            return .missingCredential(missing.kind)
+        }
+        if case .hostKeyMismatch(let expected, let actual) = error as? SSHSessionError, let profile {
+            return .hostKeyMismatch(host: profile.host.trimmingCharacters(in: .whitespaces), port: profile.port,
+                                    expected: expected, actual: actual)
+        }
+        return nil
     }
 
     /// Mosh：经 SSH 启动 mosh-server，之后走 UDP（SSH 连接断开不影响会话）。
@@ -189,9 +238,13 @@ final class TerminalSession: ObservableObject, Identifiable {
         let connectionLost = manager?.connection(for: hostID).isConnected == false
         if connectionLost {
             // 网络/连接问题：自动重连（tmux 会话可无损恢复）。
-            phase = .ended(message: "连接已断开")
             needsReconnect = true
-            if UIApplication.shared.applicationState == .active { scheduleReconnect() }
+            reconnectAttempts = 0
+            if UIApplication.shared.applicationState == .active {
+                scheduleReconnect()
+            } else {
+                phase = .ended(message: "连接已断开，回到前台后自动重连")
+            }
         } else if let error {
             phase = .ended(message: error.localizedDescription)
         } else {
@@ -199,20 +252,26 @@ final class TerminalSession: ObservableObject, Identifiable {
         }
     }
 
-    /// 自动重连，指数退避：1s、2s、4s。
+    /// 自动重连，指数退避（ReconnectPolicy：1s、2s、4s）。等待与尝试期间 phase 为 .reconnecting。
     private func scheduleReconnect() {
-        guard needsReconnect, reconnectAttempts < Self.maxReconnectAttempts else { return }
-        let delay = UInt64(1 << reconnectAttempts) * 1_000_000_000
+        guard needsReconnect, let delay = reconnectPolicy.delay(beforeAttempt: reconnectAttempts + 1) else { return }
         reconnectAttempts += 1
+        phase = .reconnecting(attempt: reconnectAttempts, max: reconnectPolicy.maxAttempts)
         let generation = self.generation
         Task {
-            try? await Task.sleep(nanoseconds: delay)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard self.generation == generation, needsReconnect else { return }
-            if kind.tmuxName == nil {
-                terminalView.feed(text: "\r\n\u{1b}[33m[tdock] 连接已断开，正在重新连接（将打开新的 shell）…\u{1b}[0m\r\n")
-            }
-            start()
+            reconnectNow()
         }
+    }
+
+    /// 跳过退避等待，立即重连（遮罩上的“立即重连”）。
+    func reconnectNow() {
+        guard case .reconnecting = phase else { return restart() }
+        if kind.tmuxName == nil {
+            terminalView.feed(text: "\r\n\u{1b}[33m[tdock] 连接已断开，正在重新连接（将打开新的 shell）…\u{1b}[0m\r\n")
+        }
+        start()
     }
 
     /// 回到前台时由 BackgroundKeeper 调用。
@@ -223,6 +282,14 @@ final class TerminalSession: ObservableObject, Identifiable {
             reconnectAttempts = 0
             scheduleReconnect()
         }
+    }
+
+    /// 用户手动“重新连接”（结束状态下）：清除自动重连状态后重新开始。
+    func restart() {
+        needsReconnect = false
+        reconnectAttempts = 0
+        phase = .connecting
+        start()
     }
 
     /// tmux 会话在别处被重命名后更新标签（不重连：已附加的客户端会自动跟随新名称）。

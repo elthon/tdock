@@ -1,7 +1,7 @@
 import Foundation
 import TDockCore
 
-/// 密钥库。私钥只在 Keychain（kind = .libraryKey）；这里只保存公开的元数据（名称、公钥、指纹）。
+/// 密钥库（生成或导入）。私钥只在 Keychain（kind = .libraryKey）；这里只保存公开的元数据（名称、公钥、指纹）。
 @MainActor
 final class KeyLibrary: ObservableObject {
     struct Key: Codable, Identifiable, Hashable {
@@ -10,6 +10,15 @@ final class KeyLibrary: ObservableObject {
         let publicKey: String
         let fingerprint: String
         let createdAt: Date
+
+        /// 显示用的类型名（由公钥前缀推导）。
+        var typeName: String {
+            if publicKey.hasPrefix("ssh-ed25519") { return "Ed25519" }
+            if publicKey.hasPrefix("ecdsa-sha2-nistp256") { return "ECDSA P-256" }
+            if publicKey.hasPrefix("ecdsa-sha2-nistp384") { return "ECDSA P-384" }
+            if publicKey.hasPrefix("ecdsa-sha2-nistp521") { return "ECDSA P-521" }
+            return String(publicKey.prefix { $0 != " " })
+        }
     }
 
     @Published private(set) var keys: [Key] = []
@@ -31,6 +40,32 @@ final class KeyLibrary: ObservableObject {
         keys.append(key)
         try persist()
         return key
+    }
+
+    /// 导入已有私钥（未加密 OpenSSH 格式的 Ed25519 / ECDSA）：校验后写入 Keychain，公开信息由私钥推导。
+    @discardableResult
+    func importKey(name: String, privateKeyPEM: String) throws -> Key {
+        let pem = privateKeyPEM.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = trimmed.isEmpty ? "导入-\(Self.dateStamp())" : trimmed
+        let info = try OpenSSHKeyGenerator.importedKeyInfo(privateKeyPEM: pem, comment: label)
+        if let existing = keys.first(where: { $0.fingerprint == info.fingerprint }) {
+            throw ImportError.duplicate(existing.name)
+        }
+        let key = Key(id: UUID(), name: label, publicKey: info.publicKey, fingerprint: info.fingerprint, createdAt: Date())
+        try KeychainStore.save(pem, for: key.id, kind: .libraryKey)
+        keys.append(key)
+        try persist()
+        return key
+    }
+
+    enum ImportError: LocalizedError {
+        case duplicate(String)
+        var errorDescription: String? {
+            switch self {
+            case .duplicate(let name): return "密钥库中已有这把密钥（\(name)）"
+            }
+        }
     }
 
     func delete(_ key: Key) {

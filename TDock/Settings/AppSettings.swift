@@ -12,6 +12,8 @@ final class AppSettings: ObservableObject {
         static let iCloud = "sync.icloud"
         static let faceID = "security.faceID"
         static let shortcuts = "keyboard.shortcutLayout"
+        static let snippets = "keyboard.snippets"
+        static let privacyScreen = "security.privacyScreen"
     }
 
     private let defaults: UserDefaults
@@ -23,6 +25,12 @@ final class AppSettings: ObservableObject {
     @Published var shortcutLayout: ShortcutLayout {
         didSet { defaults.set(try? JSONEncoder().encode(shortcutLayout), forKey: Key.shortcuts) }
     }
+    /// 指令片段（Agent 抽屉中一键发送）。
+    @Published var snippets: [Snippet] {
+        didSet { defaults.set(try? JSONEncoder().encode(snippets), forKey: Key.snippets) }
+    }
+    /// 进入多任务切换器 / 下拉通知中心时用毛玻璃遮住内容（开启 Face ID 锁时总是生效）。
+    @Published var privacyScreenEnabled: Bool { didSet { defaults.set(privacyScreenEnabled, forKey: Key.privacyScreen) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -33,7 +41,13 @@ final class AppSettings: ObservableObject {
         faceIDEnabled = defaults.bool(forKey: Key.faceID)
         shortcutLayout = defaults.data(forKey: Key.shortcuts)
             .flatMap { try? JSONDecoder().decode(ShortcutLayout.self, from: $0) } ?? .default
+        snippets = defaults.data(forKey: Key.snippets)
+            .flatMap { try? JSONDecoder().decode([Snippet].self, from: $0) } ?? Snippet.defaults
+        privacyScreenEnabled = defaults.bool(forKey: Key.privacyScreen)
     }
+
+    /// 是否在非活跃状态遮住屏幕内容。
+    var shouldObscureWhenInactive: Bool { faceIDEnabled || privacyScreenEnabled }
 
     var theme: TerminalTheme { TerminalTheme.named(themeID) }
 
@@ -45,13 +59,24 @@ final class AppSettings: ObservableObject {
     }
 
     func adjustFontSize(by delta: Double) {
-        fontSize = min(max(fontSize + delta, TerminalTheme.fontSizeRange.lowerBound), TerminalTheme.fontSizeRange.upperBound)
+        fontSize = Self.clampFontSize(fontSize + delta)
+    }
+
+    static func clampFontSize(_ size: Double) -> Double {
+        min(max(size.rounded(), TerminalTheme.fontSizeRange.lowerBound), TerminalTheme.fontSizeRange.upperBound)
+    }
+
+    static func terminalFont(size: Double) -> UIFont {
+        UIFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
     }
 
     /// 把主题与字号应用到终端视图。
     func apply(to view: TerminalView) {
         let theme = self.theme
-        view.font = UIFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
+        let font = Self.terminalFont(size: fontSize)
+        if view.font != font {
+            view.font = font // 字体不变时不重排，避免多余的重绘与窗口尺寸通知
+        }
         view.nativeForegroundColor = UIColor(theme.foreground)
         view.nativeBackgroundColor = UIColor(theme.background)
         view.caretColor = UIColor(theme.cursor)

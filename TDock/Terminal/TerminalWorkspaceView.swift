@@ -1,11 +1,18 @@
 import SwiftUI
 import TDockCore
 
-/// 一台主机的终端工作区：顶部标签栏 + 当前标签的终端。
+/// 终端工作区：顶部标签栏 + 当前标签的终端。
+/// 左上角主机名是跨主机切换菜单（长按 + 也可打开）：同时连着多台服务器时可直接切到其他主机的终端，不需要退回列表。
 struct TerminalWorkspaceView: View {
-    let hostID: UUID
-    @State var selection: UUID?
-    var toggleSidebar: (() -> Void)? = nil
+    @State private var hostID: UUID
+    @State private var selection: UUID?
+    var toggleSidebar: (() -> Void)?
+
+    init(hostID: UUID, selection: UUID?, toggleSidebar: (() -> Void)? = nil) {
+        _hostID = State(initialValue: hostID)
+        _selection = State(initialValue: selection)
+        self.toggleSidebar = toggleSidebar
+    }
 
     @EnvironmentObject private var manager: SessionManager
     @EnvironmentObject private var settings: AppSettings
@@ -38,16 +45,35 @@ struct TerminalWorkspaceView: View {
                     }
                     .accessibilityLabel("显示或隐藏服务器列表")
                 }
+                Menu {
+                    switcherMenu
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(manager.profile(hostID)?.displayName ?? "")
+                            .font(.footnote.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                    }
+                    .frame(maxWidth: 120, minHeight: barHeight)
+                    .padding(.trailing, 4)
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel("切换主机与终端")
                 TerminalTabStrip(tabs: tabs, selection: selected?.id, height: barHeight,
                                  select: select, close: close)
                     .frame(maxWidth: .infinity)
-                Button(action: newTab) {
+                // 点按：新建标签；长按：跨主机切换菜单。
+                Menu {
+                    switcherMenu
+                } label: {
                     Image(systemName: "plus")
                         .font(.body.weight(.semibold))
                         .frame(width: 44, height: barHeight)
+                } primaryAction: {
+                    newTab()
                 }
-                .keyboardShortcut("t", modifiers: .command)
-                .accessibilityLabel("新建标签")
+                .accessibilityLabel("新建标签（长按切换主机）")
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white)
@@ -65,6 +91,61 @@ struct TerminalWorkspaceView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .background { hardwareKeyboardShortcuts }
+        .onAppear { selected?.lastActiveAt = Date() }
+    }
+
+    /// 所有活动终端（按主机分组）+ 在其他服务器新建终端。
+    @ViewBuilder
+    private var switcherMenu: some View {
+        ForEach(manager.activeHostIDs, id: \.self) { id in
+            Section(manager.profile(id)?.displayName ?? "") {
+                ForEach(manager.terminals(for: id)) { session in
+                    Button {
+                        switchTo(session)
+                    } label: {
+                        if session.id == selected?.id {
+                            Label(session.title, systemImage: "checkmark")
+                        } else {
+                            Label(session.title, systemImage: Self.symbol(for: session.phase))
+                        }
+                    }
+                }
+            }
+        }
+        Section {
+            Button {
+                newTab()
+            } label: {
+                Label("在 \(manager.profile(hostID)?.displayName ?? "") 新建终端", systemImage: "plus")
+            }
+            let others = manager.store.servers.filter { $0.id != hostID }
+            if !others.isEmpty {
+                Menu {
+                    ForEach(others) { server in
+                        Button(server.displayName) { openTerminal(on: server.id) }
+                    }
+                } label: {
+                    Label("在其他服务器新建终端", systemImage: "server.rack")
+                }
+            }
+        }
+    }
+
+    private static func symbol(for phase: TerminalSession.Phase) -> String {
+        switch phase {
+        case .connected: return "circle.fill"
+        case .connecting, .reconnecting: return "circle.dotted"
+        case .ended: return "pause.circle"
+        }
+    }
+
+    private func switchTo(_ session: TerminalSession) {
+        hostID = session.hostID
+        select(session)
+    }
+
+    private func openTerminal(on otherHostID: UUID) {
+        switchTo(manager.openTerminal(hostID: otherHostID))
     }
 
     private var emptyState: some View {
@@ -75,9 +156,11 @@ struct TerminalWorkspaceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// 外接键盘：⌘W 关闭，⌘1…9 切换，⌘⇧[ / ⌘⇧] 上一个/下一个，⌘+ / ⌘- 字号。
+    /// 外接键盘：⌘T 新建，⌘W 关闭，⌘1…9 切换，⌘⇧[ / ⌘⇧] 上一个/下一个，⌘+ / ⌘- 字号。
     private var hardwareKeyboardShortcuts: some View {
         ZStack {
+            Button("", action: newTab)
+                .keyboardShortcut("t", modifiers: .command)
             Button("") { if let selected { close(selected) } }
                 .keyboardShortcut("w", modifiers: .command)
             Button("") { cycle(-1) }
@@ -101,6 +184,7 @@ struct TerminalWorkspaceView: View {
 
     private func select(_ session: TerminalSession) {
         selection = session.id
+        session.lastActiveAt = Date()
     }
 
     private func newTab() {
@@ -193,53 +277,10 @@ private struct TerminalTabChip: View {
         switch session.phase {
         case .connecting: return .yellow
         case .connected: return .green
+        case .reconnecting: return .orange
         case .ended(let message): return message == nil ? .gray : .red
         }
     }
 
     private var dynamicChipHeight: CGFloat { height >= 44 ? 40 : 28 }
-}
-
-/// 单个终端 + 连接状态遮罩。
-struct TerminalPane: View {
-    @ObservedObject var session: TerminalSession
-
-    var body: some View {
-        SwiftTermView(terminalView: session.terminalView)
-            .overlay { statusOverlay }
-            .onAppear { _ = session.terminalView.becomeFirstResponder() }
-    }
-
-    @ViewBuilder
-    private var statusOverlay: some View {
-        switch session.phase {
-        case .connected:
-            EmptyView()
-        case .connecting:
-            VStack(spacing: 12) {
-                ProgressView().tint(.white)
-                Text("正在连接 \(session.profile?.host ?? "")…").foregroundStyle(.white)
-            }
-            .padding(24)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .environment(\.colorScheme, .dark)
-        case .ended(let message):
-            VStack(spacing: 16) {
-                Image(systemName: message == nil ? "checkmark.circle" : "exclamationmark.triangle")
-                    .font(.largeTitle)
-                    .foregroundStyle(message == nil ? Color.green : Color.yellow)
-                Text(message ?? "会话已结束")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                    .textSelection(.enabled)
-                Button("重新连接") { session.start() }
-                    .buttonStyle(.borderedProminent)
-            }
-            .padding(24)
-            .frame(maxWidth: 380)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .environment(\.colorScheme, .dark)
-            .padding()
-        }
-    }
 }

@@ -5,9 +5,10 @@ import NIOCore
 enum SFTPPacketType: UInt8 {
     case initialize = 1, version = 2
     case open = 3, close = 4, read = 5, write = 6
-    case lstat = 7, fstat = 8
+    case lstat = 7, fstat = 8, setstat = 9
     case opendir = 11, readdir = 12
-    case realpath = 16, stat = 17
+    case remove = 13, mkdir = 14, rmdir = 15
+    case realpath = 16, stat = 17, rename = 18
     case status = 101, handle = 102, data = 103, name = 104, attrs = 105
 }
 

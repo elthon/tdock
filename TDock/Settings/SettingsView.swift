@@ -21,7 +21,7 @@ struct SettingsView: View {
                         HStack {
                             Text("字号")
                             Spacer()
-                            Text("\(Int(settings.fontSize)) pt").foregroundStyle(.secondary).monospacedDigit()
+                            Text("\(Int(settings.fontSize)) pt").monospacedDigit().foregroundStyle(.secondary)
                         }
                         Slider(value: $settings.fontSize, in: TerminalTheme.fontSizeRange, step: 1)
                     }
@@ -31,6 +31,7 @@ struct SettingsView: View {
 
                 Section("键盘") {
                     NavigationLink("自定义快捷栏") { ShortcutEditorView() }
+                    NavigationLink("指令片段") { SnippetEditorView() }
                 }
 
                 Section {
@@ -38,14 +39,20 @@ struct SettingsView: View {
                         get: { settings.faceIDEnabled },
                         set: { lock.setEnabled($0) }
                     ))
+                    Toggle("后台隐藏屏幕内容", isOn: Binding(
+                        get: { settings.shouldObscureWhenInactive },
+                        set: { settings.privacyScreenEnabled = $0 }
+                    ))
+                        .disabled(settings.faceIDEnabled)
                     if let error = lock.lastError {
                         Text(error).font(.footnote).foregroundStyle(.red)
                     }
                     NavigationLink("密钥库") { KeysView() }
+                    NavigationLink("已信任主机（Known Hosts）") { KnownHostsView() }
                 } header: {
                     Text("安全")
                 } footer: {
-                    Text("密码与私钥只保存在本机 Keychain，不会同步到 iCloud。")
+                    Text("“后台隐藏屏幕内容”：进入多任务切换器或下拉通知中心时用毛玻璃遮住终端内容（开启 Face ID 锁时总是生效）。密码与私钥只保存在本机 Keychain，不会同步到 iCloud。")
                 }
 
                 Section {

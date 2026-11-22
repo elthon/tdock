@@ -94,7 +94,44 @@ public final class SFTPClient: @unchecked Sendable {
         }
     }
 
+    // MARK: - File management
+
+    /// 删除文件（不能删除目录）。
+    public func remove(_ path: String) async throws {
+        try ensureOK(try await request(.remove) { $0.writeSFTPString(path) })
+    }
+
+    /// 新建目录。
+    public func makeDirectory(_ path: String, permissions: UInt32 = 0o755) async throws {
+        try ensureOK(try await request(.mkdir) {
+            $0.writeSFTPString(path)
+            SFTPAttributes(permissions: permissions).write(to: &$0)
+        })
+    }
+
+    /// 删除空目录（SFTP v3 不支持递归删除）。
+    public func removeDirectory(_ path: String) async throws {
+        try ensureOK(try await request(.rmdir) { $0.writeSFTPString(path) })
+    }
+
+    /// 重命名 / 移动。目标已存在时服务器会报错（SFTP v3 语义）。
+    public func rename(_ path: String, to newPath: String) async throws {
+        try ensureOK(try await request(.rename) {
+            $0.writeSFTPString(path)
+            $0.writeSFTPString(newPath)
+        })
+    }
+
+    /// 修改权限位（chmod），只发送 permissions 字段。
+    public func setPermissions(_ path: String, _ permissions: UInt32) async throws {
+        try ensureOK(try await request(.setstat) {
+            $0.writeSFTPString(path)
+            SFTPAttributes(permissions: permissions & 0o7777).write(to: &$0)
+        })
+    }
+
     /// 下载远程文件到本地路径。progress(已传输字节数, 总字节数?)。
+    /// 支持取消：所在 Task 被取消时抛出 CancellationError，并关闭远程句柄。
     public func download(
         _ remotePath: String,
         to localURL: URL,
@@ -129,6 +166,7 @@ public final class SFTPClient: @unchecked Sendable {
 
         for _ in 0..<Self.window { issue() }
         while !inFlight.isEmpty {
+            try Task.checkCancellation()
             let (offset, future) = inFlight.removeFirst()
             let response = try await future.get()
             if reachedEOF { continue } // 排空 EOF 之后多发的请求
@@ -165,7 +203,7 @@ public final class SFTPClient: @unchecked Sendable {
         progress?(written, total)
     }
 
-    /// 上传本地文件到远程路径（覆盖已存在的文件）。
+    /// 上传本地文件到远程路径（覆盖已存在的文件）。支持取消（抛出 CancellationError）。
     public func upload(
         _ localURL: URL,
         to remotePath: String,
@@ -186,6 +224,7 @@ public final class SFTPClient: @unchecked Sendable {
         var offset: UInt64 = 0
         var done = false
         while !done || !inFlight.isEmpty {
+            try Task.checkCancellation()
             while !done && inFlight.count < Self.window {
                 let chunk = try file.read(upToCount: Self.chunkSize) ?? Data()
                 if chunk.isEmpty { done = true; break }

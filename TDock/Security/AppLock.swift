@@ -2,9 +2,12 @@ import LocalAuthentication
 import SwiftUI
 
 /// Face ID 锁：开启后，启动 App 及从后台返回时需要验证（失败可回退设备密码）。
+/// 另有隐私遮罩：开启 Face ID 锁或“后台隐藏屏幕内容”时，App 一进入 inactive 就盖上毛玻璃，回到 active 移除。
 @MainActor
 final class AppLock: ObservableObject {
     @Published private(set) var isLocked: Bool
+    /// 非活跃（多任务切换器、通知中心、控制中心）时的隐私遮罩。
+    @Published private(set) var isObscured = false
     @Published private(set) var lastError: String?
 
     private let settings: AppSettings
@@ -30,8 +33,13 @@ final class AppLock: ObservableObject {
         switch phase {
         case .background:
             if settings.faceIDEnabled { isLocked = true }
+            if settings.shouldObscureWhenInactive { isObscured = true }
             returningFromBackground = true
+        case .inactive:
+            // 上滑进入多任务切换器或下拉通知中心时即为 inactive：此时就盖上遮罩，快照中不会出现终端内容。
+            if settings.shouldObscureWhenInactive { isObscured = true }
         case .active:
+            isObscured = false
             // 只在从后台返回时自动弹出验证；用户取消后不再反复弹出，可点按钮重试。
             if isLocked && returningFromBackground { unlock() }
             returningFromBackground = false
@@ -81,7 +89,7 @@ final class AppLock: ObservableObject {
     }
 }
 
-/// 锁定遮罩：完全遮挡内容（包括多任务切换器中的快照）。
+/// 锁定遮罩：完全遮挡内容（包括多任务切换器中的快照）。显示在 SecurityOverlayWindow 中，可盖住 sheet。
 struct LockScreen: View {
     @EnvironmentObject private var lock: AppLock
 

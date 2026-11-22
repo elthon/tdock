@@ -48,6 +48,26 @@ struct ServerEditView: View {
                 }
 
                 Section {
+                    HStack {
+                        TextField("分组（可选）", text: $draft.group)
+                        let groups = ServerListOrganizer.groupNames(store.servers)
+                        if !groups.isEmpty {
+                            Menu {
+                                ForEach(groups, id: \.self) { group in
+                                    Button(group) { draft.group = group }
+                                }
+                            } label: {
+                                Image(systemName: "chevron.up.chevron.down")
+                            }
+                            .accessibilityLabel("选择已有分组")
+                        }
+                    }
+                    Toggle("置顶", isOn: $draft.pinned)
+                } header: {
+                    Text("整理")
+                }
+
+                Section {
                     Picker("连接方式", selection: $draft.transport) {
                         Text("SSH").tag(ServerProfile.Transport.ssh)
                         Text("Mosh").tag(ServerProfile.Transport.mosh)
@@ -141,6 +161,7 @@ struct ServerEditView: View {
         profile.name = profile.name.trimmingCharacters(in: .whitespaces)
         profile.host = profile.host.trimmingCharacters(in: .whitespaces)
         profile.username = profile.username.trimmingCharacters(in: .whitespaces)
+        profile.group = profile.groupName
         if profile.authMethod == .password { profile.keyID = nil }
         guard let port = Int(portText.trimmingCharacters(in: .whitespaces)) else {
             errorMessage = "端口必须是数字"

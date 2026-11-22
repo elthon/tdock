@@ -195,3 +195,75 @@ Scripts/integration-test.sh   临时 sshd + 集成测试
 - 加密与编码：AES（FIPS-197）、OCB3（RFC 7253 及 Python cryptography 生成的向量）、zlib（Python 生成的 stored/固定/动态 Huffman 向量）。
 - **未验证**：iOS App 层（SwiftUI、SwiftTerm 集成、快捷栏、Face ID、iCloud、后台任务）尚未在 Xcode / 真机上编译运行；接口已对照 SwiftTerm 1.99.3 源码核对。
 - 已知限制：后台保活受 iOS 限制（见 7.3）；Mosh 客户端只保留一份屏幕状态，丢包时可能有最多约 1 秒的画面停顿后自动恢复（见 7.4）；端口转发仅在 App 运行期间有效。
+
+## 8. 第三阶段：用户体验优化
+
+范围：减少点击层级、异常原地闭环、终端触控/键盘细节、SFTP 与密钥库易用性、状态可视化。约束不变：密码/私钥只存本机 Keychain；不做 RSA 私钥；只重绘变化区域、按键直发不攒批、滚动上限 5000 行。可测试的逻辑继续下沉到 TDockCore。
+
+### 8.1 连接与导航
+
+| 项 | 方案 | 代码位置 |
+|---|---|---|
+| 一键直达终端 | 服务器行右侧终端按钮：有打开的终端则恢复最近使用的那个，否则新建；右滑/长按菜单含“新建终端 / 恢复最近终端 / 文件”。点击行本身仍进入主机详情（iPad 为侧栏选中）。直达时先选中该主机，再在详情栈压入终端页 | App: `ServerListView`、`SessionManager.mostRecentTerminal` |
+| 搜索 / 分组 / 置顶 | `.searchable` 按名称、主机、用户名、分组过滤；`ServerProfile` 新增 `group`（分组名）、`pinned`（置顶），随 iCloud 同步，旧数据兼容解码；列表分区为“置顶 → 各分组 → 未分组” | Core: `ServerProfile`、`ServerListOrganizer`；App: `ServerListView`、`ServerEditView` |
+| 缺失凭据原地补填 | `CredentialProvider.MissingCredential` 带类型（密码/私钥/密钥库密钥）。终端遮罩识别该错误，弹出补填表单：密码或粘贴私钥写入 Keychain，或改选密钥库中的密钥；保存后该主机所有失败标签立即重连 | App: `CredentialProvider`、`CredentialFillView`、`TerminalPane` |
+| 指纹变更出口 | 遮罩识别 `hostKeyMismatch`：红色安全警告 + 新旧指纹，“更新信任指纹并重连”需二次确认（确认框再次展示新指纹）。设置 → 安全 → “已信任主机”列表：查看主机/端口/类型/指纹，滑动删除（删除后下次连接重新走 TOFU 确认） | Core: `KnownHostEntry`（记录格式解析）；App: `KnownHostsStore`、`KnownHostsView` |
+
+### 8.2 终端交互
+
+| 项 | 方案 |
+|---|---|
+| 捏合缩放 | 终端视图挂 `UIPinchGestureRecognizer`：捏合过程中只改当前终端字号（整数步进，9–24），屏幕中央 HUD 显示 `字号 pt · 列 × 行`；松手后写入全局设置并作用到所有终端。按 1pt 步进变化时才触发重排/窗口尺寸通知，避免每帧重绘 |
+| 粘贴键 | 新增 `ShortcutKey.paste`（可放入任意快捷栏页面），Agent 抽屉也有“粘贴”。走 SwiftTerm 的 `paste`，自动遵守括号粘贴模式（`ESC[200~…ESC[201~`），向 Claude Code / Codex 粘贴多行堆栈不会被逐行执行 |
+| Ctrl/Alt 常驻锁定 | 修饰键状态机 `ModifierLatch`：单击 = 单次（下一键后释放），双击（≤0.35 s）= 常驻锁定，锁定状态下再点一次解除。单次显示为浅色填充，常驻为实心填充 + 下划线 + 锁图标。常驻时在 SwiftTerm 自动复位后立即重新置位 |
+| 指令片段 | `Snippet`（名称、命令、是否自动回车）存于本机设置（不含凭据，不同步）；默认 `claude`、`git status`、`docker ps`、`tail -f`。Agent 抽屉“片段”按钮弹出菜单一键发送；设置 → 键盘 → 指令片段 可增删改排序 |
+| 跨主机切换 | 终端页顶部栏左侧的主机名是菜单（长按 `+` 也会弹出同一菜单）：列出所有有活动终端的主机及其标签（状态），一键切换；另有“在其他服务器新建终端”。工作区的 hostID 变为可切换状态，不需要退回列表 |
+
+### 8.3 SFTP
+
+- 顶部横向滚动的路径面包屑，点任一级直接跳转；“前往路径…”输入框（支持 `~`）。
+- 右上角菜单：显示/隐藏 `.` 文件（默认隐藏）、排序（名称/修改时间/大小，升降序）、新建文件夹、上传；`.searchable` 过滤当前目录。过滤/排序逻辑在 Core `SFTPListing`，可单测。
+- 点击文件：≤ 1 MB 直接下载到临时目录用 QuickLook 预览（文本、代码、图片、PDF 等，QuickLook 内可再分享/存储）；更大的文件先弹窗显示大小，确认后再下载并分享。
+- 传输条增加取消（×）：下载/上传循环检查 Task 取消，取消后关闭句柄、删除未完成的本地临时文件。
+- 文件行 `.contextMenu` + `.swipeActions`：复制完整路径、重命名、删除（目录需为空，SFTP 协议限制）、查看/修改权限（八进制 chmod）。Core 新增 SFTP `REMOVE / MKDIR / RMDIR / RENAME / SETSTAT`。
+
+### 8.4 密钥库与安全
+
+- 导入已有私钥：粘贴或从“文件”选取 OpenSSH 未加密 Ed25519 / ECDSA 私钥，校验后写入 Keychain，元数据（公钥、指纹）由私钥推导。
+- 部署公钥（内置 ssh-copy-id）：密钥详情 → 选择服务器 → 使用 Keychain 中已保存的密码（没有则当场输入，仅用于本次，不落盘）临时登录，执行幂等脚本（`umask 077; mkdir -p ~/.ssh; grep -qxF 公钥 || 追加; chmod 700/600`），成功后用该密钥再登录一次验证，验证通过才把该服务器切换为“密钥库密钥”认证并删除已保存的密码。脚本构造在 Core `AuthorizedKeysInstaller`，公钥只允许 `ssh-ed25519` / `ecdsa-sha2-*` 单行 base64，杜绝注入。
+- 多任务切换器隐私遮罩：设置新增“后台隐藏屏幕内容”（Face ID 锁开启时总是生效）。`scenePhase` 进入 `.inactive` 即盖毛玻璃，回到 `.active` 移除。遮罩与锁屏放在独立的高层级 `UIWindow` 中，因此也能盖住 sheet（SFTP、设置等）中的内容。
+
+### 8.5 端口转发与重连
+
+- `PortForwardRule.name` 选填备注（旧数据兼容）。运行中提供“在 App 内打开”（`SFSafariViewController` 打开 `http://127.0.0.1:端口`，App 保持前台，转发不会因切到 Safari 而在后台约 30 秒后被系统挂起）与“复制地址”。
+- `TerminalSession.Phase` 新增 `.reconnecting(attempt:max:)`：自动重连等待与尝试期间遮罩显示转圈与“正在尝试自动重连（1/3）…”，并提供“立即重连”；3 次都失败才进入 `.ended` 并显示最后的错误。退避时间表 `ReconnectPolicy`（1 s、2 s、4 s）在 Core。
+
+### 8.6 测试
+
+单元测试：分组/搜索/置顶排序、新字段的旧数据兼容解码、片段编码、修饰键状态机、known_hosts 记录解析、SFTP 列表过滤/排序/面包屑、新 SFTP 报文编码、authorized_keys 脚本构造与非法公钥拒绝、私钥导入推导公钥/指纹、重连时间表。集成测试：SFTP mkdir/rename/setstat/remove/rmdir 与取消下载；部署公钥脚本对真实 sshd 执行后用该密钥登录成功且重复执行不产生重复行。
+
+### 8.7 新增文件
+
+```
+TDock/App/OverlayPresenter.swift        主机指纹确认（UIKit，从最上层页面弹出，sheet 中发起的连接也能确认）、安全遮罩窗口
+TDock/Terminal/TerminalPane.swift       终端遮罩：缺凭据补填（CredentialFillView）、指纹变更、自动重连进度
+TDock/Terminal/PinchZoom.swift          捏合缩放 + 字号/尺寸 HUD
+TDock/Settings/KnownHostsView.swift     已信任主机管理
+TDock/Settings/SnippetEditorView.swift  指令片段管理
+Packages/TDockCore/Sources/TDockCore/
+├── Model/ServerListOrganizer.swift     搜索 / 分组 / 置顶
+├── Model/KnownHostEntry.swift          known_hosts 记录解析、ReconnectPolicy
+├── Model/Snippet.swift                 指令片段
+├── SFTP/SFTPListing.swift              列表过滤排序、路径面包屑/解析、权限八进制
+└── SSH/AuthorizedKeysInstaller.swift   内置 ssh-copy-id 脚本
+```
+
+### 8.8 第三阶段验证状态
+
+- `Scripts/integration-test.sh` 下 TDockCore 共 112 个测试全部通过（Linux，Swift 6.0.3；OpenSSH 10.0、sftp-server、tmux 3.5a、mosh-server 1.4.0），新增端到端覆盖：SFTP mkdir/rename/setstat/remove/rmdir（含中文与空格路径、非空目录删除失败）；1 GB 稀疏文件下载中途取消且会话可继续使用；部署公钥前无法登录、部署后可登录、重复部署不产生重复行。authorized_keys 脚本另在本机 `/bin/sh` 上实际执行验证（目录/文件权限、补换行、幂等、含引号的自定义路径）。
+- **未验证**：iOS App 层仍未在 Xcode / 真机上编译运行（开发环境为 Linux）；已逐文件做语法解析并对照 SwiftTerm 1.99.3 源码核对接口（`paste(_:)`、`font` 重排、修饰键复位通知、`terminalDimensions`）。
+- 已知限制：
+  - iOS 16+ 程序化读取剪贴板会弹出“允许粘贴”提示，可在 系统设置 → tdock → “从其他 App 粘贴” 中设为“允许”；
+  - SFTP v3 不支持递归删除，非空目录需在终端中 `rm -r`；
+  - 部署公钥默认写入 `~/.ssh/authorized_keys`，服务器若改了 `AuthorizedKeysFile`，验证登录会失败并提示（不会切换认证方式）；
+  - 隐私遮罩依赖 `scenePhase` 的 inactive 通知，在系统截取多任务快照之前生效；端口转发仍只在 App 前台（及切后台后约 30 秒）有效，因此网页用 App 内浏览器打开。

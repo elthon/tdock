@@ -40,6 +40,11 @@ final class SessionManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] layout in self?.terminals.forEach { $0.updateShortcutBar(layout) } }
             .store(in: &cancellables)
+        settings.$snippets
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] snippets in self?.terminals.forEach { $0.updateSnippets(snippets) } }
+            .store(in: &cancellables)
     }
 
     func profile(_ id: UUID) -> ServerProfile? {
@@ -58,8 +63,8 @@ final class SessionManager: ObservableObject {
     var allConnections: [HostConnection] { Array(connections.values) }
 
     /// 建立新的 SSH 连接（由 HostConnection 调用；同一主机并发请求会被合并）。
-    func makeClient(for profile: ServerProfile) async throws -> SSHClient {
-        let credential = try CredentialProvider.credential(for: profile)
+    func makeClient(for profile: ServerProfile, credential override: SSHCredential? = nil) async throws -> SSHClient {
+        let credential = try override ?? CredentialProvider.credential(for: profile)
         let host = profile.host.trimmingCharacters(in: .whitespaces)
         let port = profile.port
         return try await SSHClient.connect(
@@ -91,6 +96,30 @@ final class SessionManager: ObservableObject {
         terminals.append(session)
         session.start()
         return session
+    }
+
+    /// 最近使用的终端（服务器列表“恢复最近终端”）。
+    func mostRecentTerminal(hostID: UUID) -> TerminalSession? {
+        terminals(for: hostID).max { $0.lastActiveAt < $1.lastActiveAt }
+    }
+
+    /// 有打开终端的主机（按服务器列表顺序），用于跨主机切换。
+    var activeHostIDs: [UUID] {
+        let ids = Set(terminals.map(\.hostID))
+        return store.servers.map(\.id).filter(ids.contains)
+    }
+
+    /// 补填凭据 / 更新指纹之后：重连该主机所有因此失败的标签。
+    func retryFailedTerminals(hostID: UUID) {
+        for session in terminals(for: hostID) where session.issue != nil {
+            session.restart()
+        }
+    }
+
+    /// 主机重装后指纹变化：用户二次确认后用新指纹替换记录，并重连。
+    func replaceTrustedHostKey(host: String, port: Int, with value: String, hostID: UUID) {
+        knownHosts.replace(host: host, port: port, value: value)
+        retryFailedTerminals(hostID: hostID)
     }
 
     func close(_ session: TerminalSession) {

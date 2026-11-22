@@ -12,12 +12,16 @@ public enum ShortcutKey: String, Codable, CaseIterable, Identifiable, Sendable {
     case pipe, tilde, slash, backslash, dash, underscore, backtick, colon, semicolon, quote, doubleQuote
     // 功能键
     case f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
+    // 动作：粘贴剪贴板（由 UI 层按括号粘贴模式发送）
+    case paste
 
     public var id: String { rawValue }
 
     public enum Kind: Equatable, Sendable {
         case modifier
         case cursor
+        /// 粘贴剪贴板内容（UI 层处理）
+        case paste
         case bytes([UInt8])
     }
 
@@ -25,6 +29,7 @@ public enum ShortcutKey: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .ctrl, .alt: return .modifier
         case .up, .down, .left, .right, .home, .end: return .cursor
+        case .paste: return .paste
         default: return .bytes(bytes)
         }
     }
@@ -32,7 +37,7 @@ public enum ShortcutKey: String, Codable, CaseIterable, Identifiable, Sendable {
     /// 发送的字节（修饰键与光标键为空，由 UI 层处理）。
     public var bytes: [UInt8] {
         switch self {
-        case .ctrl, .alt, .up, .down, .left, .right, .home, .end: return []
+        case .ctrl, .alt, .up, .down, .left, .right, .home, .end, .paste: return []
         case .esc: return [0x1B]
         case .tab: return [0x09]
         case .shiftTab: return [0x1B, 0x5B, 0x5A] // CSI Z
@@ -117,6 +122,7 @@ public enum ShortcutKey: String, Codable, CaseIterable, Identifiable, Sendable {
         case .semicolon: return ";"
         case .quote: return "'"
         case .doubleQuote: return "\""
+        case .paste: return "粘贴"
         default: return rawValue.uppercased() // F1…F12
         }
     }
@@ -124,8 +130,9 @@ public enum ShortcutKey: String, Codable, CaseIterable, Identifiable, Sendable {
     /// 辅助功能 / 设置列表中的说明。
     public var title: String {
         switch self {
-        case .ctrl: return "Ctrl（锁定，作用于下一键）"
-        case .alt: return "Alt / Meta（锁定，作用于下一键）"
+        case .ctrl: return "Ctrl（单击作用于下一键，双击常驻）"
+        case .alt: return "Alt / Meta（单击作用于下一键，双击常驻）"
+        case .paste: return "粘贴剪贴板"
         case .ctrlC: return "Ctrl+C 中断"
         case .ctrlD: return "Ctrl+D 结束输入"
         case .ctrlZ: return "Ctrl+Z 挂起"
@@ -149,8 +156,8 @@ public enum ShortcutKey: String, Codable, CaseIterable, Identifiable, Sendable {
     /// 长按 Ctrl 弹出的常用组合键。
     public static let controlCombos: [ShortcutKey] = [.ctrlC, .ctrlD, .ctrlZ, .ctrlL, .ctrlR, .ctrlA, .ctrlE, .ctrlK, .ctrlU]
 
-    /// Agent 抽屉（面向 agent CLI）：Esc、Tab 补全、Ctrl+C 中断、上下翻历史。
-    public static let agentDrawer: [ShortcutKey] = [.esc, .tab, .ctrlC, .up, .down]
+    /// Agent 抽屉（面向 agent CLI）：Esc、Tab 补全、Ctrl+C 中断、上下翻历史、粘贴（贴报错堆栈）。
+    public static let agentDrawer: [ShortcutKey] = [.esc, .tab, .ctrlC, .up, .down, .paste]
 
     /// Ctrl+字母 → 控制字符（字母 & 0x1F）。
     static func control(_ letter: Character) -> [UInt8] {
@@ -194,4 +201,58 @@ public struct ShortcutLayout: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey { case pages }
+}
+
+/// 快捷栏修饰键（Ctrl / Alt）的锁定状态机。
+///
+/// - 关闭时单击 → 单次（作用于下一次按键后自动释放）；
+/// - 单次状态下在 `doubleTapInterval` 内再次点击 → 常驻锁定（连续组合键，如 tmux / vim / emacs）；
+/// - 单次状态下超时后再点 → 关闭；常驻状态下点击 → 关闭。
+public struct ModifierLatch: Equatable, Sendable {
+    public enum State: Equatable, Sendable {
+        case off
+        case once
+        case locked
+    }
+
+    public static let doubleTapInterval = 0.35
+
+    public private(set) var state: State = .off
+    private var lastTap: Double?
+
+    public init() {}
+
+    public var isActive: Bool { state != .off }
+
+    /// 用户点击修饰键。time 为单调时钟秒数。
+    public mutating func tap(at time: Double) {
+        switch state {
+        case .off:
+            state = .once
+            lastTap = time
+        case .once:
+            if let lastTap, time - lastTap <= Self.doubleTapInterval {
+                state = .locked
+            } else {
+                state = .off
+            }
+            lastTap = nil
+        case .locked:
+            state = .off
+            lastTap = nil
+        }
+    }
+
+    /// 修饰键已作用于一次按键：单次释放，常驻保持。
+    public mutating func consumed() {
+        if state == .once {
+            state = .off
+            lastTap = nil
+        }
+    }
+
+    public mutating func reset() {
+        state = .off
+        lastTap = nil
+    }
 }

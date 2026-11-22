@@ -144,3 +144,36 @@ final class GeneratedKeyLoginTests: XCTestCase {
         XCTAssertEqual(result.stdout, "generated-ok\n")
     }
 }
+
+final class DeployKeyIntegrationTests: XCTestCase {
+    /// 内置 ssh-copy-id：经已登录的连接部署公钥后，可用该密钥登录；重复部署不产生重复行。
+    func testDeployPublicKeyThenLogin() async throws {
+        let config = try IntegrationConfig.load()
+        guard let path = ProcessInfo.processInfo.environment["TDOCK_IT_AUTHORIZED_KEYS"] else {
+            throw XCTSkip("未设置 TDOCK_IT_AUTHORIZED_KEYS")
+        }
+        let pair = OpenSSHKeyGenerator.ed25519(comment: "tdock-deploy")
+        let newKey = try SSHCredential.privateKey(OpenSSHPrivateKey.parse(pair.privateKeyPEM))
+
+        // 部署前不能登录。
+        do {
+            let client = try await config.connect(credential: newKey)
+            client.close()
+            XCTFail("部署前不应能登录")
+        } catch {}
+
+        let admin = try await config.connect()
+        defer { admin.close() }
+        let first = try await AuthorizedKeysInstaller.install(publicKey: pair.publicKey, on: admin, authorizedKeysPath: path)
+        XCTAssertEqual(first, .installed)
+        let again = try await AuthorizedKeysInstaller.install(publicKey: pair.publicKey, on: admin, authorizedKeysPath: path)
+        XCTAssertEqual(again, .alreadyPresent)
+        let contents = try String(contentsOfFile: path, encoding: .utf8)
+        XCTAssertEqual(contents.components(separatedBy: pair.publicKey).count - 1, 1, "只追加一次")
+
+        let client = try await config.connect(credential: newKey)
+        defer { client.close() }
+        let result = try await client.exec("echo deployed-ok")
+        XCTAssertEqual(result.stdout, "deployed-ok\n")
+    }
+}

@@ -12,6 +12,15 @@ public struct GeneratedKeyPair: Sendable {
     public let fingerprint: String
 }
 
+/// 导入私钥后得到的公开信息。
+public struct ImportedKeyInfo: Sendable, Equatable {
+    /// 例如 `ssh-ed25519`、`ecdsa-sha2-nistp256`
+    public let keyType: String
+    /// authorized_keys 格式公钥
+    public let publicKey: String
+    public let fingerprint: String
+}
+
 public enum OpenSSHKeyGenerator {
     /// 生成 Ed25519 密钥对。
     public static func ed25519(comment: String) -> GeneratedKeyPair {
@@ -66,6 +75,20 @@ public enum OpenSSHKeyGenerator {
             privateKeyPEM: pem,
             publicKey: trimmedComment.isEmpty ? publicLine : "\(publicLine) \(trimmedComment)",
             fingerprint: HostKeyInfo.fingerprint(ofKeyBlob: Data(publicBlob.bytes))
+        )
+    }
+
+    /// 导入已有私钥：校验（未加密 Ed25519 / ECDSA）并推导公钥行与指纹。私钥本身由调用方写入 Keychain。
+    public static func importedKeyInfo(privateKeyPEM pem: String, comment: String) throws -> ImportedKeyInfo {
+        let key = try OpenSSHPrivateKey.parse(pem)
+        let line = String(openSSHPublicKey: key.publicKey)
+        let parts = line.split(separator: " ")
+        let blob = parts.count > 1 ? Data(base64Encoded: String(parts[1])) ?? Data() : Data()
+        let sanitized = AuthorizedKeysInstaller.sanitizeComment(comment)
+        return ImportedKeyInfo(
+            keyType: parts.first.map(String.init) ?? "",
+            publicKey: sanitized.isEmpty ? line : "\(line) \(sanitized)",
+            fingerprint: HostKeyInfo.fingerprint(ofKeyBlob: blob)
         )
     }
 

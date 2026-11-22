@@ -10,7 +10,7 @@ struct ShortcutEditorView: View {
     var body: some View {
         List {
             Section {
-                Text("快捷栏显示在键盘上方，左右滑动切换页面。长按 Ctrl 可弹出常用组合键；右侧 ✨ 按钮打开 Agent 抽屉（Esc、Tab、Ctrl+C、↑、↓）。")
+                Text("快捷栏显示在键盘上方，左右滑动切换页面。Ctrl / Alt 单击作用于下一键，双击常驻锁定（再点解除）；长按 Ctrl 可弹出常用组合键。右侧 ✨ 按钮打开 Agent 抽屉（Esc、Tab、Ctrl+C、↑、↓、粘贴、指令片段）。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

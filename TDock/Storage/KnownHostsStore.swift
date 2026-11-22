@@ -32,12 +32,32 @@ final class KnownHostsStore {
         try? AppFiles.save(entries, to: fileURL)
     }
 
+    /// 用新的记录值（`keyType SHA256:…`，来自指纹不匹配错误中的“当前”值）替换。
+    func replace(host: String, port: Int, value: String) {
+        lock.lock(); defer { lock.unlock() }
+        entries[Self.entryKey(host, port)] = value
+        try? AppFiles.save(entries, to: fileURL)
+    }
+
+    /// 全部记录（设置 → 已信任主机）。
+    var allEntries: [KnownHostEntry] {
+        lock.lock(); defer { lock.unlock() }
+        return KnownHostEntry.list(entries)
+    }
+
+    /// 删除记录：下次连接时重新走首次信任确认。
+    func remove(_ entry: KnownHostEntry) {
+        lock.lock(); defer { lock.unlock() }
+        entries[entry.id] = nil
+        try? AppFiles.save(entries, to: fileURL)
+    }
+
     /// 每个 主机+端口 只记录一把密钥；密钥类型变化同样视为不匹配。
     private static func entryKey(_ host: String, _ port: Int) -> String {
-        "[\(host.lowercased())]:\(port)"
+        KnownHostEntry.key(host: host, port: port)
     }
 
     private static func entryValue(_ key: HostKeyInfo) -> String {
-        "\(key.keyType) \(key.fingerprint)"
+        KnownHostEntry.value(keyType: key.keyType, fingerprint: key.fingerprint)
     }
 }

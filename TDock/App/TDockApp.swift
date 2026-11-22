@@ -38,35 +38,19 @@ struct TDockApp: App {
     }
 }
 
-/// 根视图：服务器列表 + 全局主机密钥确认框 + Face ID 锁屏遮罩。
+/// 根视图：服务器列表；主机指纹确认框与锁屏/隐私遮罩由独立的呈现器负责（可盖住 sheet）。
 struct RootView: View {
     @EnvironmentObject private var manager: SessionManager
     @EnvironmentObject private var lock: AppLock
+    @State private var hostKeyPresenter = HostKeyPromptPresenter()
+    @State private var overlay = SecurityOverlayController()
 
     var body: some View {
         ServerListView()
-            .alert(
-                "首次连接此主机",
-                isPresented: Binding(
-                    get: { manager.hostKeyPrompt != nil },
-                    set: { if !$0, manager.hostKeyPrompt != nil { manager.answerHostKeyPrompt(trust: false) } }
-                ),
-                presenting: manager.hostKeyPrompt
-            ) { _ in
-                Button("信任并连接") { manager.answerHostKeyPrompt(trust: true) }
-                Button("取消", role: .cancel) { manager.answerHostKeyPrompt(trust: false) }
-            } message: { prompt in
-                Text("""
-                \(prompt.host):\(String(prompt.port)) 的主机密钥尚未记录。
-                请核对指纹后再确认：
-
-                \(prompt.key.keyType)
-                \(prompt.key.fingerprint)
-                """)
-            }
-            .overlay {
-                if lock.isLocked {
-                    LockScreen()
+            .onAppear { overlay.start(lock: lock) }
+            .onReceive(manager.$hostKeyPrompt) { prompt in
+                hostKeyPresenter.show(prompt) { trust in
+                    manager.answerHostKeyPrompt(trust: trust)
                 }
             }
     }

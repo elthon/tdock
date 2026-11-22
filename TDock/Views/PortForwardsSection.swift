@@ -1,20 +1,24 @@
+import SafariServices
 import SwiftUI
 import TDockCore
 
-/// 主机详情页中的“端口转发”分区：规则列表 + 启停开关。
+/// 主机详情页中的“端口转发”分区：规则列表（可带备注名）+ 启停开关；运行中可在 App 内浏览器打开或复制本地地址。
 struct PortForwardsSection: View {
     let hostID: UUID
     @EnvironmentObject private var store: ServerStore
     @EnvironmentObject private var manager: SessionManager
     @State private var editing: PortForwardRule?
     @State private var error: String?
+    @State private var browsing: BrowserItem?
 
     private var profile: ServerProfile? { store.servers.first { $0.id == hostID } }
 
     var body: some View {
         Section {
             ForEach(profile?.portForwards ?? []) { rule in
-                PortForwardRow(rule: rule, connection: manager.connection(for: hostID))
+                PortForwardRow(rule: rule, connection: manager.connection(for: hostID)) {
+                    browsing = BrowserItem(url: rule.localURL)
+                }
                     .swipeActions {
                         Button("删除", role: .destructive) { remove(rule) }
                         Button("编辑") { editing = rule }.tint(.blue)
@@ -31,10 +35,13 @@ struct PortForwardsSection: View {
         } header: {
             Text("端口转发")
         } footer: {
-            Text("在本机 127.0.0.1 上监听，经 SSH 转发到服务器可访问的地址（如内网主机）。App 在前台时有效。")
+            Text("在本机 127.0.0.1 上监听，经 SSH 转发到服务器可访问的地址（如内网主机）。App 在前台时有效——请用“在 App 内打开”访问网页：切到 Safari 会让 tdock 进入后台，约 30 秒后转发会被系统挂起。")
         }
         .sheet(item: $editing) { rule in
             PortForwardEditView(rule: rule) { save($0) }
+        }
+        .fullScreenCover(item: $browsing) { item in
+            SafariView(url: item.url).ignoresSafeArea()
         }
     }
 
@@ -66,9 +73,27 @@ struct PortForwardsSection: View {
     }
 }
 
+struct BrowserItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+/// App 内浏览器（SFSafariViewController）：访问转发端口时 tdock 保持在前台，转发不中断。
+struct SafariView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        SFSafariViewController(url: url)
+    }
+
+    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+}
+
 private struct PortForwardRow: View {
     let rule: PortForwardRule
     @ObservedObject var connection: HostConnection
+    let openInBrowser: () -> Void
+    @State private var copied = false
 
     private var state: HostConnection.ForwardState? { connection.forwardStates[rule.id] }
 
@@ -78,13 +103,31 @@ private struct PortForwardRow: View {
                 get: { state != nil && !isFailed },
                 set: { $0 ? connection.startForward(rule) : connection.stopForward(rule.id) }
             )) {
-                Text(rule.summary).font(.callout.monospaced()).lineLimit(1).minimumScaleFactor(0.7)
+                VStack(alignment: .leading, spacing: 2) {
+                    if !rule.name.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Text(rule.displayName).font(.headline)
+                    }
+                    Text(rule.summary).font(.callout.monospaced()).lineLimit(1).minimumScaleFactor(0.7)
+                }
             }
             switch state {
             case .starting:
                 Text("正在启动…").font(.caption).foregroundStyle(.secondary)
             case .running(let connections):
                 Text("运行中 · \(connections) 个连接").font(.caption).foregroundStyle(.green)
+                HStack(spacing: 16) {
+                    Button(action: openInBrowser) {
+                        Label("在 App 内打开", systemImage: "safari")
+                    }
+                    Button {
+                        UIPasteboard.general.string = rule.localURL.absoluteString
+                        copied = true
+                    } label: {
+                        Label(copied ? "已复制" : "复制地址", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
             case .failed(let message):
                 Text(message).font(.caption).foregroundStyle(.red)
             case nil:
@@ -117,6 +160,9 @@ struct PortForwardEditView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("备注（可选）") {
+                    TextField("例如 远程面板、数据库", text: $rule.name)
+                }
                 Section("本机") {
                     TextField("本地端口（1024–65535）", text: $localPort).keyboardType(.numberPad)
                 }
@@ -149,6 +195,7 @@ struct PortForwardEditView: View {
         result.localPort = local
         result.remotePort = remote
         result.remoteHost = result.remoteHost.trimmingCharacters(in: .whitespaces)
+        result.name = result.name.trimmingCharacters(in: .whitespaces)
         if let message = result.validationError() {
             error = message
             return
