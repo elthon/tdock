@@ -126,7 +126,9 @@ else
   fi
   arch_suffix=""
   [ "$(uname -m)" = aarch64 ] && arch_suffix="-aarch64"
-  name="swift-$SWIFT_VERSION-RELEASE-$SWIFT_PLATFORM$arch_suffix"
+  # 目录名不带点（ubuntu2404），文件名里的 Ubuntu 版本带点（ubuntu24.04）；debian12 两处相同。
+  file_platform="$(printf '%s' "$SWIFT_PLATFORM" | sed -E 's/^ubuntu([0-9]{2})([0-9]{2})$/ubuntu\1.\2/')"
+  name="swift-$SWIFT_VERSION-RELEASE-$file_platform$arch_suffix"
   url="https://download.swift.org/swift-$SWIFT_VERSION-release/$SWIFT_PLATFORM$arch_suffix/swift-$SWIFT_VERSION-RELEASE/$name.tar.gz"
   log "下载 Swift：$url"
   tmp="$PREFIX/$name.tar.gz"
