@@ -176,6 +176,7 @@ Packages/TDockCore/Sources/TDockCore/
 ├── Tmux/       TmuxCommands（含 TmuxManager、ShellQuote）
 └── Model/      ServerProfile、ServerSync、TerminalTheme、ShortcutLayout、OpenSSHPrivateKey、OpenSSHKeyGenerator
 Scripts/integration-test.sh   临时 sshd + 集成测试
+Scripts/setup-linux.sh        新 Linux 环境（云端/VPS）一键准备 Swift 与测试服务器端
 ```
 
 ### 7.7 测试
