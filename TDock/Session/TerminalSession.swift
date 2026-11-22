@@ -269,6 +269,13 @@ extension TerminalSession: TerminalViewDelegate {
         remoteTitle = title
     }
 
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        guard let url = URL(string: link),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" else { return }
+        UIApplication.shared.open(url)
+    }
+
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func scrolled(source: TerminalView, position: Double) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
