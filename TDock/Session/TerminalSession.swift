@@ -65,7 +65,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         self.kind = kind
         self.index = index
         self.manager = manager
-        terminalView = TerminalView(
+        terminalView = ComposingTerminalView(
             frame: .zero,
             font: nil,
             options: TerminalOptions(scrollback: Self.scrollbackLines)
