@@ -5,6 +5,7 @@ import TDockCore
 struct TerminalWorkspaceView: View {
     let hostID: UUID
     @State var selection: UUID?
+    var toggleSidebar: (() -> Void)? = nil
 
     @EnvironmentObject private var manager: SessionManager
     @EnvironmentObject private var settings: AppSettings
@@ -30,6 +31,13 @@ struct TerminalWorkspaceView: View {
                         .frame(width: 44, height: barHeight)
                 }
                 .accessibilityLabel("返回主机详情")
+                if let toggleSidebar {
+                    Button(action: toggleSidebar) {
+                        Image(systemName: "sidebar.left")
+                            .frame(width: 36, height: barHeight)
+                    }
+                    .accessibilityLabel("显示或隐藏服务器列表")
+                }
                 TerminalTabStrip(tabs: tabs, selection: selected?.id, height: barHeight,
                                  select: select, close: close)
                     .frame(maxWidth: .infinity)
