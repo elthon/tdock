@@ -1,0 +1,96 @@
+# CI：PR 与 master 推送时运行。
+#   core-linux  TDockCore 单元 + 集成测试（临时 sshd / SFTP / tmux / mosh），任何测试被跳过即失败
+#   app-ios     XcodeGen 生成工程 → 在 iOS 模拟器上编译 App 并运行 TDockTests；另在 macOS 上跑 TDockCore 单元测试
+# 不需要任何 secret：签名走模拟器本地签名，集成测试密钥现场生成。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core-linux:
+    name: TDockCore · Linux（含集成测试）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 缓存 Swift 工具链
+        uses: actions/cache@v4
+        with:
+          path: ~/.tdock-dev/swift
+          key: swift-6.0.3-ubuntu2404-${{ runner.arch }}
+
+      - name: 缓存 SwiftPM 构建
+        uses: actions/cache@v4
+        with:
+          path: Packages/TDockCore/.build
+          key: spm-linux-${{ runner.arch }}-${{ hashFiles('Packages/TDockCore/Package.resolved') }}-${{ github.sha }}
+          restore-keys: spm-linux-${{ runner.arch }}-${{ hashFiles('Packages/TDockCore/Package.resolved') }}-
+
+      - name: 安装 Swift 与 sshd / tmux / mosh
+        run: Scripts/setup-linux.sh
+
+      - name: 运行全部测试
+        run: |
+          source ~/.tdock-dev/env.sh
+          set -o pipefail
+          Scripts/integration-test.sh 2>&1 | tee "$RUNNER_TEMP/test.log"
+          # 集成测试在缺环境时会 XCTSkip；CI 里环境是齐的，跳过说明配置坏了。
+          if grep -E "^Test Case '.*' skipped" "$RUNNER_TEMP/test.log"; then
+            echo "::error::有测试被跳过（见上），CI 中应全部执行"
+            exit 1
+          fi
+
+  app-ios:
+    name: TDock App · iOS 模拟器
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选择 Xcode 26（最新正式版）
+        run: |
+          xcode="$(ls -d /Applications/Xcode_26*.app | grep -vi beta | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: 缓存 Swift 包
+        uses: actions/cache@v4
+        with:
+          path: .spm
+          key: spm-xcode-${{ hashFiles('project.yml', 'Packages/TDockCore/Package.resolved') }}
+          restore-keys: spm-xcode-
+
+      - name: 生成 Xcode 工程
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: 编译并运行 TDockTests
+        run: |
+          set -o pipefail
+          udid="$(xcrun simctl list devices available -j \
+            | jq -r '[.devices | to_entries[] | select(.key | test("iOS")) | .value[] | select(.name | startswith("iPhone"))] | last | .udid')"
+          [ -n "$udid" ] && [ "$udid" != null ] || { echo "::error::没有可用的 iPhone 模拟器"; exit 1; }
+          xcrun simctl list devices | grep "$udid"
+          xcodebuild test \
+            -project TDock.xcodeproj -scheme TDock \
+            -destination "id=$udid" \
+            -clonedSourcePackagesDirPath .spm \
+            -skipPackagePluginValidation \
+            -quiet
+
+      - name: TDockCore 单元测试（macOS）
+        working-directory: Packages/TDockCore
+        run: swift test

@@ -12,6 +12,7 @@ iOS SSH 终端（SwiftUI + SwiftTerm，XcodeGen 生成工程）。设计与各�
   Scripts/integration-test.sh       # 全部测试（含集成测试）
   ```
   只跑单元测试：`cd Packages/TDockCore && swift test`（集成测试会自动跳过）。
+- CI（`.github/workflows/ci.yml`）：PR 与 master 推送时在 Linux 跑全部测试（有测试被跳过即失败），在 macOS 上 XcodeGen 生成工程、模拟器编译 App 并跑 `TDockTests`。功能/修复走 PR，CI 通过后再合并。
 
 ## 硬性约束
 
