@@ -108,6 +108,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
         }
         var snippetConfig = UIButton.Configuration.filled()
         snippetConfig.image = UIImage(systemName: "text.badge.plus")
+        snippetConfig.cornerStyle = .fixed
+        snippetConfig.background.cornerRadius = 7
         snippetConfig.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2)
         snippetButton.configuration = snippetConfig
         snippetButton.accessibilityLabel = "指令片段"
@@ -116,6 +118,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
 
         var readerConfig = UIButton.Configuration.filled()
         readerConfig.image = UIImage(systemName: "doc.text.magnifyingglass")
+        readerConfig.cornerStyle = .fixed
+        readerConfig.background.cornerRadius = 7
         readerConfig.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2)
         readerButton.configuration = readerConfig
         readerButton.accessibilityLabel = "全文查看与搜索"
@@ -220,6 +224,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private func makeButton(for key: ShortcutKey, title: String, prominent: Bool) -> UIButton {
         var config = prominent ? UIButton.Configuration.filled() : UIButton.Configuration.gray()
         config.title = title
+        config.cornerStyle = .fixed
+        config.background.cornerRadius = 7
         if !prominent {
             config.baseForegroundColor = .label
             config.baseBackgroundColor = .tertiarySystemBackground
@@ -228,6 +234,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
         config.titleTextAttributesTransformer = Self.textAttributes(size: prominent ? 14 : 15, underline: false)
         config.titleLineBreakMode = .byClipping
         let button = UIButton(configuration: config)
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.72
         button.accessibilityLabel = key.title
         button.tag = ShortcutKey.allCases.firstIndex(of: key) ?? 0
 
