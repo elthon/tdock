@@ -385,7 +385,8 @@ extension TerminalSession: TerminalViewDelegate {
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
     func scrolled(source: TerminalView, position: Double) {
-        let scrolledBack = source.canScroll && position < 0.985
+        // SwiftTerm 在底部时恰好报告 1；用阈值会让长缓冲区里小幅回滚不显示按钮。
+        let scrolledBack = source.canScroll && position < 1
         if isScrolledBack != scrolledBack {
             isScrolledBack = scrolledBack
         }

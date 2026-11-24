@@ -40,6 +40,14 @@ final class TmuxIntegrationTests: XCTestCase {
         try await out.waitFor("TMUX_42")
         attached.close()
 
+        // capture-pane 的 -t 是面板目标：精确会话名必须写成 "=name:"，否则 tmux 报 can't find pane。
+        let captured = try await tmux.capturePane("alpha")
+        XCTAssertTrue(captured.contains("TMUX_42"), "应抓到会话历史输出：\(captured)")
+        do {
+            _ = try await tmux.capturePane("alp")
+            XCTFail("会话名前缀不应匹配到 alpha")
+        } catch TmuxError.commandFailed {}
+
         try await tmux.rename("beta 二", to: "gamma")
         try await tmux.kill("alpha")
         try await Task.sleep(nanoseconds: 300_000_000)

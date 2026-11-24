@@ -123,7 +123,7 @@ final class Phase3TerminalTests: XCTestCase {
             process.waitUntilExit()
             XCTAssertEqual(process.terminationStatus, 0)
             let arguments = String(decoding: data, as: UTF8.self).split(separator: "\0").map(String.init)
-            XCTAssertEqual(arguments, ["-u", "capture-pane", "-p", "-J", "-t", "=" + name, "-S", expectedStart])
+            XCTAssertEqual(arguments, ["-u", "capture-pane", "-p", "-J", "-t", "=" + name + ":", "-S", expectedStart])
         }
     }
 }

@@ -85,10 +85,11 @@ public struct TmuxCommands: Sendable {
         ShellQuote.script("exec \(tmux) new-session -A -s \(ShellQuote.quote(name))")
     }
 
-    /// 抓取指定会话当前活动面板的滚动缓冲历史（默认最近 5000 行，-J 合并自动折行并去掉行尾填充空格）。
+    /// 抓取指定会话当前活动面板的滚动缓冲历史（默认最近 5000 行，-J 合并自动折行；行尾空格由调用方裁掉）。
+    /// `-t` 是面板目标，精确会话名需写成 `=name:`（只写 `=name` 会被当作面板名而找不到）。
     public func capturePane(_ name: String, historyLines: Int = 5000) -> String {
         let start = -max(1, historyLines)
-        return ShellQuote.script("\(tmux) capture-pane -p -J -t \(ShellQuote.quote("=" + name)) -S \(start)")
+        return ShellQuote.script("\(tmux) capture-pane -p -J -t \(ShellQuote.quote("=" + name + ":")) -S \(start)")
     }
 
     /// App 默认实例的便捷入口。
