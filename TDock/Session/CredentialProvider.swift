@@ -18,8 +18,8 @@ enum CredentialProvider {
 
         var errorDescription: String? {
             switch kind {
-            case .password: return "本机未保存该服务器的密码（可能是从 iCloud 同步来的配置）"
-            case .privateKey: return "本机未保存该服务器的私钥（可能是从 iCloud 同步来的配置）"
+            case .password: return "本机未保存该服务器的密码（配置可能来自同步或文件导入）"
+            case .privateKey: return "本机未保存该服务器的私钥（配置可能来自同步或文件导入）"
             case .libraryKey: return "该服务器使用的密钥不在本机密钥库中"
             }
         }

@@ -36,6 +36,14 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink("文件备份与恢复") { ServerBackupView() }
+                } header: {
+                    Text("备份与迁移")
+                } footer: {
+                    Text("手动导出、导入服务器配置，可通过 iCloud 云盘或 AirDrop 传递文件。与下方的 iCloud 自动同步独立，不需要 App 的 iCloud 授权。")
+                }
+
+                Section {
                     Toggle("打开 App 时需要 Face ID", isOn: Binding(
                         get: { settings.faceIDEnabled },
                         set: { lock.setEnabled($0) }

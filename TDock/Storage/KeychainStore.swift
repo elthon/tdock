@@ -77,6 +77,15 @@ enum KeychainStore {
         delete(for: serverID, kind: .password)
         delete(for: serverID, kind: .privateKey)
     }
+
+    /// Import may change the destination attached to a configuration ID. Never
+    /// allow old credentials to be silently reused for that new destination.
+    static func clearForImport(_ serverID: UUID) throws {
+        for kind in [Kind.password, .privateKey] {
+            let status = SecItemDelete(baseQuery(serverID, kind) as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure(status: status) }
+        }
+    }
 }
 
 extension KeychainStore.Kind {
