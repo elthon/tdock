@@ -185,7 +185,9 @@ struct SFTPBrowserView: View {
         if entry.isDirectory {
             model.navigate(to: SFTPPath.join(model.path, entry.name))
         } else if entry.attributes.isSymlink {
-            model.openSymlink(entry)
+            model.openSymlink(entry) { largeEntry in
+                pendingLargeDownload = largeEntry
+            }
         } else if let size = entry.attributes.size, size > SFTPListing.previewLimit {
             pendingLargeDownload = entry
         } else {
@@ -419,15 +421,19 @@ final class SFTPBrowserModel: ObservableObject {
         navigate(to: SFTPPath.resolve(input, current: path, home: home))
     }
 
-    /// 符号链接：指向目录则进入，否则按文件处理（预览/下载）。
-    func openSymlink(_ entry: SFTPEntry) {
+    /// 符号链接：指向目录则进入，大文件走确认弹窗，小文件直接预览。
+    func openSymlink(_ entry: SFTPEntry, confirmLarge: @escaping (SFTPEntry) -> Void) {
         let target = SFTPPath.join(path, entry.name)
         Task {
             if let attrs = try? await sftp?.stat(target) {
                 if attrs.isDirectory {
                     navigate(to: target)
+                } else if let size = attrs.size, size > SFTPListing.previewLimit {
+                    var resolved = entry
+                    resolved.attributes.size = size
+                    confirmLarge(resolved)
                 } else {
-                    download(entry, preview: (attrs.size ?? 0) <= SFTPListing.previewLimit)
+                    download(entry, preview: true)
                 }
             }
         }

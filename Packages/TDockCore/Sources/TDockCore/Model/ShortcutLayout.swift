@@ -28,7 +28,7 @@ public enum ShortcutKey: String, Codable, CaseIterable, Identifiable, Sendable {
     public var kind: Kind {
         switch self {
         case .ctrl, .alt: return .modifier
-        case .up, .down, .left, .right, .home, .end: return .cursor
+        case .up, .down, .left, .right, .home, .end, .pageUp, .pageDown: return .cursor
         case .paste: return .paste
         default: return .bytes(bytes)
         }
@@ -37,14 +37,12 @@ public enum ShortcutKey: String, Codable, CaseIterable, Identifiable, Sendable {
     /// 发送的字节（修饰键与光标键为空，由 UI 层处理）。
     public var bytes: [UInt8] {
         switch self {
-        case .ctrl, .alt, .up, .down, .left, .right, .home, .end, .paste: return []
+        case .ctrl, .alt, .up, .down, .left, .right, .home, .end, .pageUp, .pageDown, .paste: return []
         case .esc: return [0x1B]
         case .tab: return [0x09]
         case .shiftTab: return [0x1B, 0x5B, 0x5A] // CSI Z
         case .enter: return [0x0D]
         case .backspace: return [0x7F]
-        case .pageUp: return Array("\u{1b}[5~".utf8)
-        case .pageDown: return Array("\u{1b}[6~".utf8)
         case .ctrlC: return Self.control("c")
         case .ctrlD: return Self.control("d")
         case .ctrlZ: return Self.control("z")

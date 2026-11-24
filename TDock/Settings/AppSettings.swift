@@ -84,6 +84,7 @@ final class AppSettings: ObservableObject {
             SwiftTerm.Color(red8: UInt16($0.red), green8: UInt16($0.green), blue8: UInt16($0.blue))
         })
         view.keyboardAppearance = theme.isLight ? .light : .dark
+        view.indicatorStyle = theme.isLight ? .black : .white
     }
 }
 

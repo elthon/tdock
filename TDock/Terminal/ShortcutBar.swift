@@ -25,6 +25,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private var ctrlLatch = ModifierLatch()
     private var altLatch = ModifierLatch()
     private let snippetButton = UIButton(type: .system)
+    private let readerButton = UIButton(type: .system)
+    var onOpenReader: (() -> Void)?
 
     private let scrollView = UIScrollView()
     private let pageControl = UIPageControl()
@@ -93,6 +95,14 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
         snippetButton.accessibilityLabel = "指令片段"
         snippetButton.showsMenuAsPrimaryAction = true
         drawer.addArrangedSubview(snippetButton)
+
+        var readerConfig = UIButton.Configuration.filled()
+        readerConfig.image = UIImage(systemName: "doc.text.magnifyingglass")
+        readerConfig.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2)
+        readerButton.configuration = readerConfig
+        readerButton.accessibilityLabel = "全文查看与搜索"
+        readerButton.addTarget(self, action: #selector(openReaderTapped), for: .touchUpInside)
+        drawer.addArrangedSubview(readerButton)
 
         // 分页按键区
         scrollView.isPagingEnabled = true
@@ -307,9 +317,13 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
             // 锁定的 Alt 作用于快捷栏按键：加 ESC 前缀（Meta）。
             if terminalView.metaModifier {
                 bytes.insert(0x1B, at: 0)
-                terminalView.metaModifier = false
+                altLatch.consumed()
+                terminalView.metaModifier = altLatch.isActive
             }
-            terminalView.controlModifier = false
+            if terminalView.controlModifier {
+                ctrlLatch.consumed()
+                terminalView.controlModifier = ctrlLatch.isActive
+            }
             terminalView.send(bytes)
         }
         refreshModifiers()
@@ -331,6 +345,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
         case .right: terminalView.sendKeyRight()
         case .home: terminalView.sendKeyHome()
         case .end: terminalView.sendKeyEnd()
+        case .pageUp: terminalView.pageUp()
+        case .pageDown: terminalView.pageDown()
         default: break
         }
     }
@@ -377,6 +393,11 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
 
     @objc private func dismissKeyboard() {
         _ = terminalView?.resignFirstResponder()
+    }
+
+    @objc private func openReaderTapped() {
+        feedback()
+        onOpenReader?()
     }
 
     private func feedback() {

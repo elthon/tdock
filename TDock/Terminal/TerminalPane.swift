@@ -17,6 +17,7 @@ struct TerminalPane: View {
         SwiftTermView(terminalView: session.terminalView)
             .overlay { statusOverlay }
             .overlay { PinchHUD(session: session) }
+            .overlay(alignment: .bottomTrailing) { scrollbackAccessory }
             .onAppear { _ = session.terminalView.becomeFirstResponder() }
             .onChange(of: session.issue) { issue in
                 // 缺凭据时直接弹出补填表单。
@@ -29,6 +30,41 @@ struct TerminalPane: View {
                     }
                 }
             }
+            .sheet(isPresented: $session.isShowingReader) {
+                TerminalOutputReaderView(session: session)
+            }
+    }
+
+    @ViewBuilder
+    private var scrollbackAccessory: some View {
+        if session.phase == .connected && session.isScrolledBack {
+            HStack(spacing: 8) {
+                Button {
+                    session.presentReader()
+                } label: {
+                    Label("全文/搜索", systemImage: "doc.text.magnifyingglass")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(.ultraThinMaterial, in: Capsule())
+                }
+                Button {
+                    session.scrollToBottom()
+                } label: {
+                    Label("回到底部", systemImage: "arrow.down.to.line")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(.ultraThinMaterial, in: Capsule())
+                }
+            }
+            .foregroundStyle(.white)
+            .environment(\.colorScheme, .dark)
+            .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+            .padding(.trailing, 12)
+            .padding(.bottom, 12)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
     }
 
     @ViewBuilder
@@ -99,6 +135,9 @@ struct TerminalPane: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.red)
+            Button("重新连接") { session.restart() }
+                .buttonStyle(.bordered)
+                .tint(.white)
         }
         .confirmationDialog("确认信任新的主机密钥？", isPresented: $confirmingNewHostKey, titleVisibility: .visible) {
             Button("我已核对，信任并重连", role: .destructive) {

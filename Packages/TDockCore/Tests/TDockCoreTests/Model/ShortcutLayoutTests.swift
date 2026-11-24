@@ -21,6 +21,8 @@ final class ShortcutLayoutTests: XCTestCase {
     func testKinds() {
         XCTAssertEqual(ShortcutKey.ctrl.kind, .modifier)
         XCTAssertEqual(ShortcutKey.up.kind, .cursor)
+        XCTAssertEqual(ShortcutKey.pageUp.kind, .cursor)
+        XCTAssertEqual(ShortcutKey.pageDown.kind, .cursor)
         XCTAssertEqual(ShortcutKey.esc.kind, .bytes([0x1B]))
         XCTAssertEqual(ShortcutKey.paste.kind, .paste)
         XCTAssertTrue(ShortcutKey.paste.bytes.isEmpty)
