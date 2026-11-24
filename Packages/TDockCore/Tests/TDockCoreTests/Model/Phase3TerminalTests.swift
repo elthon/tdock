@@ -98,8 +98,32 @@ final class Phase3TerminalTests: XCTestCase {
         XCTAssertEqual(doc.tailText(lines: 2), "line 3: retry error: timeout\nline 4: done")
     }
 
-    func testTmuxCapturePaneCommand() {
-        let cmd = TmuxCommands().capturePane("my session", historyLines: 5000)
-        XCTAssertTrue(cmd.contains("capture-pane -p -J -t '=my session' -S -5000"))
+    func testTmuxCapturePaneCommand() throws {
+        // 执行完整的 sh -c 包装，用替身记录参数，避免断言外层引号的转义形式。
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let tmux = dir.appendingPathComponent("tmux")
+        try "#!/bin/sh\nprintf '%s\\000' \"$@\"\n".write(to: tmux, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: tmux.path)
+
+        for (name, historyLines, expectedStart) in [
+            ("my session", 5000, "-5000"),
+            ("dev's $(printf expanded); echo unexpected", 0, "-1"),
+            ("开发 环境", -10, "-1"),
+        ] {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", TmuxCommands().capturePane(name, historyLines: historyLines)]
+            process.environment = ["PATH": dir.path + ":/usr/bin:/bin"]
+            let output = Pipe()
+            process.standardOutput = output
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+            let arguments = String(decoding: data, as: UTF8.self).split(separator: "\0").map(String.init)
+            XCTAssertEqual(arguments, ["-u", "capture-pane", "-p", "-J", "-t", "=" + name, "-S", expectedStart])
+        }
     }
 }
