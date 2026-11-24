@@ -54,14 +54,17 @@ jobs:
 
   app-ios:
     name: TDock App · iOS 模拟器
-    runs-on: macos-26
+    # macos-26 两次排队 15 分钟都没分到 runner 被取消，改用 macos-15。
+    runs-on: macos-15
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - name: 选择 Xcode 26（最新正式版）
+      - name: 选择 Xcode（优先最新的 Xcode 26 正式版）
         run: |
-          xcode="$(ls -d /Applications/Xcode_26*.app | grep -vi beta | sort -V | tail -1)"
+          ls -d /Applications/Xcode*.app
+          xcode="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)"
+          [ -n "$xcode" ] || xcode="$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)"
           sudo xcode-select -s "$xcode"
           xcodebuild -version
 
