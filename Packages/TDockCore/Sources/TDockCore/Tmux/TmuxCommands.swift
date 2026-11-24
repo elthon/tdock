@@ -85,6 +85,12 @@ public struct TmuxCommands: Sendable {
         ShellQuote.script("exec \(tmux) new-session -A -s \(ShellQuote.quote(name))")
     }
 
+    /// 抓取指定会话当前活动面板的滚动缓冲历史（默认最近 5000 行，-J 合并自动折行并去掉行尾填充空格）。
+    public func capturePane(_ name: String, historyLines: Int = 5000) -> String {
+        let start = -max(1, historyLines)
+        return ShellQuote.script("\(tmux) capture-pane -p -J -t \(ShellQuote.quote("=" + name)) -S \(start)")
+    }
+
     /// App 默认实例的便捷入口。
     public static func attachOrCreate(_ name: String) -> String {
         TmuxCommands().attachOrCreate(name)
@@ -158,6 +164,15 @@ public struct TmuxManager: Sendable {
 
     public func kill(_ name: String) async throws {
         try await run(commands.kill(name))
+    }
+
+    /// 抓取指定 tmux 会话的活动面板历史输出（纯文本）。
+    public func capturePane(_ name: String, historyLines: Int = 5000) async throws -> String {
+        let result = try await client.exec(commands.capturePane(name, historyLines: historyLines), timeout: .seconds(5))
+        guard result.succeeded else {
+            throw TmuxError.commandFailed(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return result.stdout
     }
 
     private func run(_ command: String) async throws {

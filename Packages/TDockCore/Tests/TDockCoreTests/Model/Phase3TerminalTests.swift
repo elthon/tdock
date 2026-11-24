@@ -70,4 +70,60 @@ final class Phase3TerminalTests: XCTestCase {
         XCTAssertEqual(minimal.command, "htop")
         XCTAssertTrue(minimal.sendReturn)
     }
+
+    func testTerminalOutputDocumentCleaningAndANSIStripping() {
+        let raw = "\u{1b}[32muser@host\u{1b}[0m:~$ ls -la   \r\ndrwxr-xr-x 2 root root\t  \r\n\u{1b}]0;title\u{07}error: connection refused\r\nwarning: deprecated: old api\r\n   \r\n\r\n"
+        let doc = TerminalOutputDocument(rawText: raw, source: .tmux(sessionName: "dev"))
+        XCTAssertEqual(doc.source, .tmux(sessionName: "dev"))
+        XCTAssertEqual(doc.lines, [
+            "user@host:~$ ls -la",
+            "drwxr-xr-x 2 root root",
+            "error: connection refused",
+            "warning: deprecated: old api"
+        ])
+        XCTAssertEqual(doc.errorCount, 1)
+        XCTAssertEqual(doc.warningCount, 1)
+        XCTAssertEqual(doc.issueLineIndices, [2, 3])
+    }
+
+    func testTerminalOutputDocumentSearchAndExtraction() {
+        let raw = "line 1: start\nLine 2: Error: failed to connect\nline 3: retry error: timeout\nline 4: done"
+        let doc = TerminalOutputDocument(rawText: raw)
+        let matches = doc.search("error")
+        XCTAssertEqual(matches.count, 2)
+        XCTAssertEqual(matches[0].lineIndex, 1)
+        XCTAssertEqual(matches[0].lineNumber, 2)
+        XCTAssertEqual(matches[1].lineIndex, 2)
+        XCTAssertEqual(doc.text(fromLine: 2, toLine: 1), "Line 2: Error: failed to connect\nline 3: retry error: timeout")
+        XCTAssertEqual(doc.tailText(lines: 2), "line 3: retry error: timeout\nline 4: done")
+    }
+
+    func testTmuxCapturePaneCommand() throws {
+        // 执行完整的 sh -c 包装，用替身记录参数，避免断言外层引号的转义形式。
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let tmux = dir.appendingPathComponent("tmux")
+        try "#!/bin/sh\nprintf '%s\\000' \"$@\"\n".write(to: tmux, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: tmux.path)
+
+        for (name, historyLines, expectedStart) in [
+            ("my session", 5000, "-5000"),
+            ("dev's $(printf expanded); echo unexpected", 0, "-1"),
+            ("开发 环境", -10, "-1"),
+        ] {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", TmuxCommands().capturePane(name, historyLines: historyLines)]
+            process.environment = ["PATH": dir.path + ":/usr/bin:/bin"]
+            let output = Pipe()
+            process.standardOutput = output
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+            let arguments = String(decoding: data, as: UTF8.self).split(separator: "\0").map(String.init)
+            XCTAssertEqual(arguments, ["-u", "capture-pane", "-p", "-J", "-t", "=" + name, "-S", expectedStart])
+        }
+    }
 }

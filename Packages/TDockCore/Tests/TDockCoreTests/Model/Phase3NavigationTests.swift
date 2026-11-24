@@ -35,13 +35,21 @@ final class Phase3NavigationTests: XCTestCase {
             server("e", group: " 测试 "), server("f", group: "Alpha", pinned: true),
         ]
         let sections = ServerListOrganizer.sections(servers)
-        XCTAssertEqual(sections.map(\.kind), [.pinned, .group("Alpha"), .group("测试"), .ungrouped])
+        // 中英文的相对顺序取决于系统区域；仍需验证分组使用本地化排序。
+        let groups = ["Alpha", "测试"].sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        XCTAssertEqual(sections.map(\.kind), [.pinned] + groups.map { .group($0) } + [.ungrouped])
         XCTAssertEqual(sections[0].servers.map(\.name), ["c", "f"])
-        XCTAssertEqual(sections[1].servers.map(\.name), ["d"])
-        XCTAssertEqual(sections[2].servers.map(\.name), ["b", "e"])
+        XCTAssertEqual(sections.first { $0.kind == .group("Alpha") }?.servers.map(\.name), ["d"])
+        XCTAssertEqual(sections.first { $0.kind == .group("测试") }?.servers.map(\.name), ["b", "e"])
         XCTAssertEqual(sections[3].servers.map(\.name), ["a"])
         XCTAssertNil(sections[3].title)
-        XCTAssertEqual(ServerListOrganizer.groupNames(servers), ["Alpha", "测试"])
+        XCTAssertEqual(ServerListOrganizer.groupNames(servers), groups)
+    }
+
+    func testGroupNamesUseNaturalNumericOrder() {
+        let servers = [server("a", group: "Group 10"), server("b", group: "Group 2")]
+        XCTAssertEqual(ServerListOrganizer.groupNames(servers), ["Group 2", "Group 10"])
+        XCTAssertEqual(ServerListOrganizer.sections(servers).map(\.kind), [.group("Group 2"), .group("Group 10")])
     }
 
     func testSearchMatchesAllTerms() {

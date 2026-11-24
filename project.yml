@@ -29,6 +29,15 @@ targets:
     dependencies:
       - package: SwiftTerm
       - package: TDockCore
+    postBuildScripts:
+      - name: Record iCloud sync availability
+        script: bash "${SRCROOT}/Scripts/write-sync-capabilities.sh"
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - "$(SRCROOT)/Scripts/write-sync-capabilities.sh"
+          - "$(SRCROOT)/TDock/Resources"
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SyncCapabilities.plist"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.tdock.TDock

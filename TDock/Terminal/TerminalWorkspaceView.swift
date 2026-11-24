@@ -63,6 +63,16 @@ struct TerminalWorkspaceView: View {
                 TerminalTabStrip(tabs: tabs, selection: selected?.id, height: barHeight,
                                  select: select, close: close)
                     .frame(maxWidth: .infinity)
+                if let selected {
+                    Button {
+                        selected.presentReader()
+                    } label: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(width: 38, height: barHeight)
+                    }
+                    .accessibilityLabel("全文查看与搜索")
+                }
                 // 点按：新建标签；长按：跨主机切换菜单。
                 Menu {
                     switcherMenu
@@ -156,13 +166,15 @@ struct TerminalWorkspaceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// 外接键盘：⌘T 新建，⌘W 关闭，⌘1…9 切换，⌘⇧[ / ⌘⇧] 上一个/下一个，⌘+ / ⌘- 字号。
+    /// 外接键盘：⌘T 新建，⌘W 关闭，⌘F 全文搜索，⌘1…9 切换，⌘⇧[ / ⌘⇧] 上一个/下一个，⌘+ / ⌘- 字号。
     private var hardwareKeyboardShortcuts: some View {
         ZStack {
             Button("", action: newTab)
                 .keyboardShortcut("t", modifiers: .command)
             Button("") { if let selected { close(selected) } }
                 .keyboardShortcut("w", modifiers: .command)
+            Button("") { selected?.presentReader() }
+                .keyboardShortcut("f", modifiers: .command)
             Button("") { cycle(-1) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
             Button("") { cycle(1) }

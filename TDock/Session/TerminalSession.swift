@@ -62,6 +62,10 @@ final class TerminalSession: ObservableObject, Identifiable {
     @Published private(set) var issue: Issue?
     /// 捏合缩放时的字号 / 尺寸提示（nil 表示不显示）。
     @Published private(set) var zoomHUD: ZoomHUD?
+    /// 当前是否已向上回滚离开底部（普通 shell 下显示“回到底部”悬浮按钮）。
+    @Published private(set) var isScrolledBack = false
+    /// 是否弹出终端全文查看器（类似微信双击放大阅读器）。
+    @Published var isShowingReader = false
     /// 最近一次被选中/使用的时间（服务器列表“恢复最近终端”）。
     var lastActiveAt = Date()
     let terminalView: TerminalView
@@ -90,7 +94,8 @@ final class TerminalSession: ObservableObject, Identifiable {
         terminalView.terminalDelegate = self
         // 自定义快捷栏替换 SwiftTerm 默认的按键栏。
         let bar = ShortcutBar(terminalView: terminalView, layout: manager.settings.shortcutLayout,
-                              snippets: manager.settings.snippets)
+                              snippets: manager.settings.snippets, isLightAppearance: manager.settings.theme.isLight)
+        bar.onOpenReader = { [weak self] in self?.presentReader() }
         terminalView.inputAccessoryView = bar
         shortcutBar = bar
         applyAppearance()
@@ -313,11 +318,45 @@ final class TerminalSession: ObservableObject, Identifiable {
         transport?.send(bytes)
     }
 
+    // MARK: - Scrollback & Output Reader
+
+    /// 打开终端全文查看器，并先收起软键盘以留出整屏阅读空间。
+    func presentReader() {
+        _ = terminalView.resignFirstResponder()
+        isShowingReader = true
+    }
+
+    /// 滚动回终端最底部。
+    func scrollToBottom() {
+        terminalView.scroll(toPosition: 1.0)
+        isScrolledBack = false
+    }
+
+    /// 提取当前终端的完整历史文本（tmux 标签优先通过 SSH 静默执行 `tmux capture-pane` 拉取服务器端 5000 行完整缓冲，失败则回退本地 SwiftTerm 缓冲）。
+    func captureOutputDocument() async -> TerminalOutputDocument {
+        if let tmuxName = kind.tmuxName,
+           let manager,
+           let client = try? await manager.connection(for: hostID).client(),
+           let captured = try? await TmuxManager(client: client).capturePane(tmuxName, historyLines: Self.scrollbackLines),
+           !captured.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return TerminalOutputDocument(rawText: captured, source: .tmux(sessionName: tmuxName))
+        }
+        let activeData = terminalView.getBufferAsData(kind: .active, encoding: .utf8)
+        let activeText = String(data: activeData, encoding: .utf8) ?? ""
+        if !activeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return TerminalOutputDocument(rawText: activeText, source: .localBuffer)
+        }
+        let normalData = terminalView.getBufferAsData(kind: .normal, encoding: .utf8)
+        let normalText = String(data: normalData, encoding: .utf8) ?? ""
+        return TerminalOutputDocument(rawText: normalText, source: .localBuffer)
+    }
+
     // MARK: - Appearance
 
     func applyAppearance() {
         guard let settings = manager?.settings else { return }
         settings.apply(to: terminalView)
+        shortcutBar?.update(isLightAppearance: settings.theme.isLight)
     }
 }
 
@@ -344,7 +383,14 @@ extension TerminalSession: TerminalViewDelegate {
     }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-    func scrolled(source: TerminalView, position: Double) {}
+
+    func scrolled(source: TerminalView, position: Double) {
+        let scrolledBack = source.canScroll && position < 0.985
+        if isScrolledBack != scrolledBack {
+            isScrolledBack = scrolledBack
+        }
+    }
+
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 }
 

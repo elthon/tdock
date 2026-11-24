@@ -135,6 +135,14 @@ final class SessionManager: ObservableObject {
         terminals(for: hostID).forEach(close)
     }
 
+    func disconnectImportedProfiles(_ ids: Set<UUID>) {
+        for id in ids {
+            closeAll(hostID: id)
+            connections[id]?.disconnect()
+            connections[id] = nil
+        }
+    }
+
     func tmuxSessionRenamed(hostID: UUID, from oldName: String, to newName: String) {
         terminals(for: hostID).filter { $0.kind == .tmux(oldName) }.forEach { $0.renameTmux(to: newName) }
     }

@@ -57,6 +57,29 @@ final class ServerStore: ObservableObject {
 
     // MARK: - Sync
 
+    @discardableResult
+    func importBackup(_ backup: ServerBackup, policy: ServerBackup.ConflictPolicy) throws -> ServerBackup.ImportPlan {
+        let plan = try backup.importPlan(current: servers, policy: policy)
+        guard plan.changedCount > 0 else { return plan }
+        // New imports must not pick up any stale credentials under the same UUID.
+        for id in plan.credentialResetIDs.union(plan.addedIDs) {
+            try KeychainStore.clearForImport(id)
+        }
+        var newTombstones = tombstones
+        for id in plan.addedIDs.union(plan.updatedIDs) { newTombstones[id] = nil }
+        try AppFiles.save(plan.servers, to: serversURL)
+        do {
+            try AppFiles.save(newTombstones, to: tombstonesURL)
+        } catch {
+            try? AppFiles.save(servers, to: serversURL)
+            throw error
+        }
+        servers = plan.servers
+        tombstones = newTombstones
+        onLocalChange?()
+        return plan
+    }
+
     var document: SyncDocument {
         SyncDocument(servers: servers, tombstones: tombstones)
     }

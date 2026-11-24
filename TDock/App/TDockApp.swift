@@ -32,6 +32,7 @@ struct TDockApp: App {
                 .environmentObject(lock)
         }
         .onChange(of: scenePhase) { phase in
+            if phase == .active { CloudSync.shared.refresh() }
             lock.scenePhaseChanged(phase)
             background.scenePhaseChanged(phase)
         }

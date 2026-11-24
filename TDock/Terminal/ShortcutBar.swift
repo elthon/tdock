@@ -25,6 +25,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private var ctrlLatch = ModifierLatch()
     private var altLatch = ModifierLatch()
     private let snippetButton = UIButton(type: .system)
+    private let readerButton = UIButton(type: .system)
+    var onOpenReader: (() -> Void)?
 
     private let scrollView = UIScrollView()
     private let pageControl = UIPageControl()
@@ -34,17 +36,21 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private var modifierButtons: [ShortcutKey: UIButton] = [:]
     private var repeatTimer: Timer?
     private let haptics = UIImpactFeedbackGenerator(style: .light)
+    private var isLightAppearance: Bool
+    private var lastScrollWidth: CGFloat = 0
 
     var enableInputClicksWhenVisible: Bool { true }
 
-    init(terminalView: TerminalView, layout: ShortcutLayout, snippets: [Snippet]) {
+    init(terminalView: TerminalView, layout: ShortcutLayout, snippets: [Snippet], isLightAppearance: Bool = false) {
         self.terminalView = terminalView
         self.layout = layout.normalized()
         self.snippets = snippets
+        self.isLightAppearance = isLightAppearance
         super.init(frame: CGRect(x: 0, y: 0, width: 320, height: Self.rowHeight), inputViewStyle: .keyboard)
         autoresizingMask = .flexibleHeight
         allowsSelfSizing = true
         buildViews()
+        applyBarAppearance()
         rebuildPages()
         rebuildSnippetMenu()
         // 只关心自己这个终端的修饰键复位（SwiftTerm 在修饰键作用于一次按键后自动复位并发通知）。
@@ -56,6 +62,15 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = scrollView.bounds.width
+        if width > 0 && abs(width - lastScrollWidth) > 1 {
+            lastScrollWidth = width
+            rebuildPages()
+        }
     }
 
     override var intrinsicContentSize: CGSize {
@@ -75,6 +90,21 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
         rebuildSnippetMenu()
     }
 
+    /// 让快捷栏与终端的 `keyboardAppearance`（亮/暗键盘）保持一致，避免系统深色模式 + 亮色终端主题时出现黑底黑字。
+    func update(isLightAppearance: Bool) {
+        guard self.isLightAppearance != isLightAppearance else { return }
+        self.isLightAppearance = isLightAppearance
+        applyBarAppearance()
+        refreshModifiers()
+    }
+
+    private func applyBarAppearance() {
+        overrideUserInterfaceStyle = isLightAppearance ? .light : .dark
+        backgroundColor = isLightAppearance
+            ? UIColor(white: 0.84, alpha: 0.96)
+            : UIColor(white: 0.13, alpha: 0.96)
+    }
+
     // MARK: - Layout
 
     private func buildViews() {
@@ -88,11 +118,23 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
         }
         var snippetConfig = UIButton.Configuration.filled()
         snippetConfig.image = UIImage(systemName: "text.badge.plus")
+        snippetConfig.cornerStyle = .fixed
+        snippetConfig.background.cornerRadius = 7
         snippetConfig.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2)
         snippetButton.configuration = snippetConfig
         snippetButton.accessibilityLabel = "指令片段"
         snippetButton.showsMenuAsPrimaryAction = true
         drawer.addArrangedSubview(snippetButton)
+
+        var readerConfig = UIButton.Configuration.filled()
+        readerConfig.image = UIImage(systemName: "doc.text.magnifyingglass")
+        readerConfig.cornerStyle = .fixed
+        readerConfig.background.cornerRadius = 7
+        readerConfig.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2)
+        readerButton.configuration = readerConfig
+        readerButton.accessibilityLabel = "全文查看与搜索"
+        readerButton.addTarget(self, action: #selector(openReaderTapped), for: .touchUpInside)
+        drawer.addArrangedSubview(readerButton)
 
         // 分页按键区
         scrollView.isPagingEnabled = true
@@ -150,17 +192,44 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private func rebuildPages() {
         pagesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         modifierButtons = [:]
+
+        let availableWidth = scrollView.bounds.width > 0 ? scrollView.bounds.width : 300
+        let spacing: CGFloat = 5
+        let targetPerRow = 8
+        let keySize = min(Self.rowHeight - 8, max(30, floor((availableWidth - spacing * CGFloat(targetPerRow - 1)) / CGFloat(targetPerRow))))
+        let perPage = max(1, Int(floor((availableWidth + spacing) / (keySize + spacing))))
+
+        // 超出单页容纳数量的页面自动拆页，确保 F1–F12 等不会挤成细条，所有按键保持等大圆形。
+        var visualPages: [[ShortcutKey]] = []
         for keys in layout.pages {
+            var offset = 0
+            while offset < keys.count {
+                let end = min(offset + perPage, keys.count)
+                visualPages.append(Array(keys[offset..<end]))
+                offset = end
+            }
+        }
+
+        for keys in visualPages {
             let page = UIStackView()
             page.axis = .horizontal
-            page.distribution = .fillEqually
-            page.spacing = 5
-            for key in keys { page.addArrangedSubview(makeButton(for: key, title: key.label, prominent: false)) }
+            page.alignment = .center
+            page.distribution = .fill
+            page.spacing = spacing
+            for key in keys {
+                let button = makeButton(for: key, title: key.label, prominent: false)
+                button.widthAnchor.constraint(equalToConstant: keySize).isActive = true
+                button.heightAnchor.constraint(equalToConstant: keySize).isActive = true
+                page.addArrangedSubview(button)
+            }
+            if keys.count < perPage {
+                page.addArrangedSubview(UIView())
+            }
             pagesStack.addArrangedSubview(page)
             // 每页宽度 = 可视宽度，实现整页滑动。
             page.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor).isActive = true
         }
-        pageControl.numberOfPages = layout.pages.count
+        pageControl.numberOfPages = visualPages.count
         pageControl.currentPage = 0
         scrollView.contentOffset = .zero
         refreshModifiers()
@@ -192,10 +261,17 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private func makeButton(for key: ShortcutKey, title: String, prominent: Bool) -> UIButton {
         var config = prominent ? UIButton.Configuration.filled() : UIButton.Configuration.gray()
         config.title = title
+        config.cornerStyle = .capsule
+        if !prominent {
+            config.baseForegroundColor = .label
+            config.baseBackgroundColor = .tertiarySystemBackground
+        }
         config.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2)
-        config.titleTextAttributesTransformer = Self.textAttributes(size: prominent ? 14 : 15, underline: false)
+        config.titleTextAttributesTransformer = Self.textAttributes(size: prominent ? 14 : 13, underline: false)
         config.titleLineBreakMode = .byClipping
         let button = UIButton(configuration: config)
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.72
         button.accessibilityLabel = key.title
         button.tag = ShortcutKey.allCases.firstIndex(of: key) ?? 0
 
@@ -307,9 +383,13 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
             // 锁定的 Alt 作用于快捷栏按键：加 ESC 前缀（Meta）。
             if terminalView.metaModifier {
                 bytes.insert(0x1B, at: 0)
-                terminalView.metaModifier = false
+                altLatch.consumed()
+                terminalView.metaModifier = altLatch.isActive
             }
-            terminalView.controlModifier = false
+            if terminalView.controlModifier {
+                ctrlLatch.consumed()
+                terminalView.controlModifier = ctrlLatch.isActive
+            }
             terminalView.send(bytes)
         }
         refreshModifiers()
@@ -331,6 +411,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
         case .right: terminalView.sendKeyRight()
         case .home: terminalView.sendKeyHome()
         case .end: terminalView.sendKeyEnd()
+        case .pageUp: terminalView.pageUp()
+        case .pageDown: terminalView.pageDown()
         default: break
         }
     }
@@ -345,8 +427,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
             var config = button.configuration
             switch state {
             case .off:
-                config?.baseBackgroundColor = nil
-                config?.baseForegroundColor = nil
+                config?.baseBackgroundColor = .tertiarySystemBackground
+                config?.baseForegroundColor = .label
                 config?.image = nil
             case .once:
                 config?.baseBackgroundColor = UIColor.tintColor.withAlphaComponent(0.3)
@@ -377,6 +459,11 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
 
     @objc private func dismissKeyboard() {
         _ = terminalView?.resignFirstResponder()
+    }
+
+    @objc private func openReaderTapped() {
+        feedback()
+        onOpenReader?()
     }
 
     private func feedback() {
