@@ -174,12 +174,13 @@ public struct ShortcutLayout: Codable, Equatable, Sendable {
         self.pages = pages
     }
 
-    /// 默认：第一页 Esc、Tab、Ctrl、Alt、←↑↓→（拇指可及）；后续为符号、导航、功能键。
+    /// 默认：第一页 Esc、Tab、Ctrl、Alt、←↑↓→（拇指可及）；后续为符号、导航、功能键（每页最多 8 键，保证所有按键等宽等圆）。
     public static let `default` = ShortcutLayout(pages: [
         [.esc, .tab, .ctrl, .alt, .left, .up, .down, .right],
         [.pipe, .tilde, .slash, .dash, .underscore, .backtick, .shiftTab, .ctrlB],
         [.home, .end, .pageUp, .pageDown, .backslash, .colon, .quote, .doubleQuote],
-        [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12],
+        [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8],
+        [.f9, .f10, .f11, .f12],
     ])
 
     /// 去掉空页、截断超限内容；全部为空时回到默认布局。

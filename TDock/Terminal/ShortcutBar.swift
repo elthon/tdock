@@ -37,6 +37,7 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private var repeatTimer: Timer?
     private let haptics = UIImpactFeedbackGenerator(style: .light)
     private var isLightAppearance: Bool
+    private var lastScrollWidth: CGFloat = 0
 
     var enableInputClicksWhenVisible: Bool { true }
 
@@ -61,6 +62,15 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = scrollView.bounds.width
+        if width > 0 && abs(width - lastScrollWidth) > 1 {
+            lastScrollWidth = width
+            rebuildPages()
+        }
     }
 
     override var intrinsicContentSize: CGSize {
@@ -182,17 +192,44 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private func rebuildPages() {
         pagesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         modifierButtons = [:]
+
+        let availableWidth = scrollView.bounds.width > 0 ? scrollView.bounds.width : 300
+        let spacing: CGFloat = 5
+        let targetPerRow = 8
+        let keySize = min(Self.rowHeight - 8, max(30, floor((availableWidth - spacing * CGFloat(targetPerRow - 1)) / CGFloat(targetPerRow))))
+        let perPage = max(1, Int(floor((availableWidth + spacing) / (keySize + spacing))))
+
+        // 超出单页容纳数量的页面自动拆页，确保 F1–F12 等不会挤成细条，所有按键保持等大圆形。
+        var visualPages: [[ShortcutKey]] = []
         for keys in layout.pages {
+            var offset = 0
+            while offset < keys.count {
+                let end = min(offset + perPage, keys.count)
+                visualPages.append(Array(keys[offset..<end]))
+                offset = end
+            }
+        }
+
+        for keys in visualPages {
             let page = UIStackView()
             page.axis = .horizontal
-            page.distribution = .fillEqually
-            page.spacing = 5
-            for key in keys { page.addArrangedSubview(makeButton(for: key, title: key.label, prominent: false)) }
+            page.alignment = .center
+            page.distribution = .fill
+            page.spacing = spacing
+            for key in keys {
+                let button = makeButton(for: key, title: key.label, prominent: false)
+                button.widthAnchor.constraint(equalToConstant: keySize).isActive = true
+                button.heightAnchor.constraint(equalToConstant: keySize).isActive = true
+                page.addArrangedSubview(button)
+            }
+            if keys.count < perPage {
+                page.addArrangedSubview(UIView())
+            }
             pagesStack.addArrangedSubview(page)
             // 每页宽度 = 可视宽度，实现整页滑动。
             page.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor).isActive = true
         }
-        pageControl.numberOfPages = layout.pages.count
+        pageControl.numberOfPages = visualPages.count
         pageControl.currentPage = 0
         scrollView.contentOffset = .zero
         refreshModifiers()
@@ -224,14 +261,13 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private func makeButton(for key: ShortcutKey, title: String, prominent: Bool) -> UIButton {
         var config = prominent ? UIButton.Configuration.filled() : UIButton.Configuration.gray()
         config.title = title
-        config.cornerStyle = .fixed
-        config.background.cornerRadius = 7
+        config.cornerStyle = .capsule
         if !prominent {
             config.baseForegroundColor = .label
             config.baseBackgroundColor = .tertiarySystemBackground
         }
         config.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2)
-        config.titleTextAttributesTransformer = Self.textAttributes(size: prominent ? 14 : 15, underline: false)
+        config.titleTextAttributesTransformer = Self.textAttributes(size: prominent ? 14 : 13, underline: false)
         config.titleLineBreakMode = .byClipping
         let button = UIButton(configuration: config)
         button.titleLabel?.adjustsFontSizeToFitWidth = true
