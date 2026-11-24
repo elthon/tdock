@@ -94,7 +94,7 @@ final class TerminalSession: ObservableObject, Identifiable {
         terminalView.terminalDelegate = self
         // 自定义快捷栏替换 SwiftTerm 默认的按键栏。
         let bar = ShortcutBar(terminalView: terminalView, layout: manager.settings.shortcutLayout,
-                              snippets: manager.settings.snippets)
+                              snippets: manager.settings.snippets, isLightAppearance: manager.settings.theme.isLight)
         bar.onOpenReader = { [weak self] in self?.presentReader() }
         terminalView.inputAccessoryView = bar
         shortcutBar = bar
@@ -356,6 +356,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     func applyAppearance() {
         guard let settings = manager?.settings else { return }
         settings.apply(to: terminalView)
+        shortcutBar?.update(isLightAppearance: settings.theme.isLight)
     }
 }
 

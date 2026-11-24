@@ -36,17 +36,20 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private var modifierButtons: [ShortcutKey: UIButton] = [:]
     private var repeatTimer: Timer?
     private let haptics = UIImpactFeedbackGenerator(style: .light)
+    private var isLightAppearance: Bool
 
     var enableInputClicksWhenVisible: Bool { true }
 
-    init(terminalView: TerminalView, layout: ShortcutLayout, snippets: [Snippet]) {
+    init(terminalView: TerminalView, layout: ShortcutLayout, snippets: [Snippet], isLightAppearance: Bool = false) {
         self.terminalView = terminalView
         self.layout = layout.normalized()
         self.snippets = snippets
+        self.isLightAppearance = isLightAppearance
         super.init(frame: CGRect(x: 0, y: 0, width: 320, height: Self.rowHeight), inputViewStyle: .keyboard)
         autoresizingMask = .flexibleHeight
         allowsSelfSizing = true
         buildViews()
+        applyBarAppearance()
         rebuildPages()
         rebuildSnippetMenu()
         // 只关心自己这个终端的修饰键复位（SwiftTerm 在修饰键作用于一次按键后自动复位并发通知）。
@@ -75,6 +78,21 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
         guard newSnippets != snippets else { return }
         snippets = newSnippets
         rebuildSnippetMenu()
+    }
+
+    /// 让快捷栏与终端的 `keyboardAppearance`（亮/暗键盘）保持一致，避免系统深色模式 + 亮色终端主题时出现黑底黑字。
+    func update(isLightAppearance: Bool) {
+        guard self.isLightAppearance != isLightAppearance else { return }
+        self.isLightAppearance = isLightAppearance
+        applyBarAppearance()
+        refreshModifiers()
+    }
+
+    private func applyBarAppearance() {
+        overrideUserInterfaceStyle = isLightAppearance ? .light : .dark
+        backgroundColor = isLightAppearance
+            ? UIColor(white: 0.84, alpha: 0.96)
+            : UIColor(white: 0.13, alpha: 0.96)
     }
 
     // MARK: - Layout
@@ -202,6 +220,10 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
     private func makeButton(for key: ShortcutKey, title: String, prominent: Bool) -> UIButton {
         var config = prominent ? UIButton.Configuration.filled() : UIButton.Configuration.gray()
         config.title = title
+        if !prominent {
+            config.baseForegroundColor = .label
+            config.baseBackgroundColor = .tertiarySystemBackground
+        }
         config.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 2, bottom: 2, trailing: 2)
         config.titleTextAttributesTransformer = Self.textAttributes(size: prominent ? 14 : 15, underline: false)
         config.titleLineBreakMode = .byClipping
@@ -361,8 +383,8 @@ final class ShortcutBar: UIInputView, UIInputViewAudioFeedback {
             var config = button.configuration
             switch state {
             case .off:
-                config?.baseBackgroundColor = nil
-                config?.baseForegroundColor = nil
+                config?.baseBackgroundColor = .tertiarySystemBackground
+                config?.baseForegroundColor = .label
                 config?.image = nil
             case .once:
                 config?.baseBackgroundColor = UIColor.tintColor.withAlphaComponent(0.3)
